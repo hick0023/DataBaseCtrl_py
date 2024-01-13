@@ -70,6 +70,8 @@ class DataBaseCtrl():
     """クラス内部データフレームの行状態"""
     TableName:str
     """テーブル名"""
+    DirectMode:bool
+    """直接データベースアクセスモード"""
     strCon:str
     """接続文字列"""
     conn:Connection = None
@@ -79,14 +81,16 @@ class DataBaseCtrl():
     err:Error
     """エラーコード""" 
     
-    def __init__(self, DataBase_Path:str, TableName:str) -> None:
+    def __init__(self, DataBase_Path:str, TableName:str, DirectMode:bool=False) -> None:
         """データベース(.accdb)制御クラス(コンストラクター)
 
         Args:
             DataBase_Path (str): データベースファイルパス
             TableName (str): テーブル名
+            DirectMode (bool, optional): 直接データベースアクセスモード=True. Defaults to False.
         """
         self.TableName = TableName
+        self.DirectMode = DirectMode
         #拡張子の判定
         file_name = os.path.basename(DataBase_Path)
         file_ext = os.path.splitext(file_name)[1]
@@ -108,11 +112,14 @@ class DataBaseCtrl():
         if(self.conn != None):
             self.conn.close()
             
-    def UpdateInternalDataFrame(self, set_index:bool=True) -> bool:
+    def UpdateInternalDataFrame(self, set_index:Optional[str]='ID') -> bool:
         """データベースから内部データフレームを更新する。
 
         Args:
-            set_index (bool, optional): １行目をインデクスにする. Defaults to True.
+            set_index (Optional[str], optional): インデクスにする行名, Noneとするとインデックス指定しない. Defaults to 'ID'.
+
+        Returns:
+            bool: 成功=True / 失敗=False
         """        
         #SQLでデータベースの読み取り
         sql = self.__SelectSQL()        
@@ -120,21 +127,21 @@ class DataBaseCtrl():
         res = self.cursor.fetchall()
         if(len(res)<1):
             self.err = Error.NO_DATA_IN_TABLE
-            return
+            return False
         #行データの作成
         column_inf = res[0].cursor_description       
         self.Column_DF = pd.DataFrame(column_inf,None,['Name','Type','N/A','Size','Tol','Scale','Flag'])
         #データフレーム構築
         df = pd.DataFrame(np.array(res), columns=[c for c in self.Column_DF['Name']])
-        if(set_index):
-            self.Int_DF = df.set_index('ID')
+        if(type(set_index) == str):
+            self.Int_DF = df.set_index(set_index)
         #データ行の状態データフレーム構築、イニシャライズ
         data_dict:Dict[str,List[Any]]={}                
         data_dict['ID'] = self.Int_DF.index.to_list()
         data_dict['RowState'] = [DataRowState.NotChange for idx in self.Int_DF.index.to_list()] 
         df = pd.DataFrame(data_dict,)
-        if(set_index):
-            self.RowState_DF = df.set_index('ID')       
+        if(type(set_index) == str):
+            self.RowState_DF = df.set_index(set_index)       
             
         self.err = Error.NO_ERR
         return True        
@@ -160,14 +167,13 @@ class DataBaseCtrl():
 
         Returns:
             pd.DataFrame: 検索結果
-        """
+        """        
         if(type(Ext_DF) == type(None)):
-            sel_ser = self.Int_DF.index == ID
-            out_df = self.Int_DF[sel_ser]
+            Selected_DB = self.Int_DF           
         else:
-            sel_ser = Ext_DF.index == ID
-            out_df = Ext_DF.index[sel_ser]
-        
+            Selected_DB = Ext_DF
+        sel_ser = Selected_DB.index == ID
+        out_df:pd.DataFrame = Selected_DB[sel_ser]        
         return out_df
     
     def SerchRows(self, SerchDict:Dict[str,Union[str,int,float,Decimal,bool]],
@@ -310,7 +316,7 @@ class DataBaseCtrl():
         return True
     
     def DeleteRow_IntDataFrame(self, ID:Union[int,str], Del:bool=True) -> bool:
-        """内部データフレームに行を削除する。(RowStateのみ変更)
+        """内部データフレームの行を削除する。(RowStateのみ変更)
 
         Args:
             ID (int, str): 削除する行ID
