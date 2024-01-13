@@ -59,6 +59,46 @@ class DataRowState(Enum):
     Deleted = 3
     """ 削除されている """
 
+class AccessDataType(Enum):
+    CHAR = 1
+    """固定長の文字列,Parm(最大文字数)"""
+    VARCHAR = 2
+    """可変長の文字列,Parm(最大文字数)"""
+    MEMO = 3
+    """長いテキストやメモ"""
+    BYTE = 4
+    """1 バイトの符号なし整数"""
+    INTEGER = 5
+    """2 バイトの符号付き整数"""
+    LONG = 6
+    """4 バイトの符号付き整数"""
+    SINGLE = 7
+    """単精度浮動小数点数"""
+    DOUBLE = 8
+    """倍精度浮動小数点数"""
+    CURRENCY = 9
+    """通貨型"""
+    DECIMAL = 10
+    """【使用不能】 固定小数点数,parm(全体の桁数,小数点以下の桁)"""
+    AUTOINCREMENT = 11
+    """自動増分の整数"""
+    DATE = 12
+    """日付のみ"""
+    TIME = 13
+    """時刻のみ"""
+    DATETIME = 14
+    """日付と時刻"""
+    TIMESTAMP = 15
+    """タイムスタンプ"""
+    YESNO = 16
+    """ブール型 (Yes/No)"""
+    OLEOBJECT = 17
+    """OLE オブジェクト"""
+    HYPERLINK = 18
+    """【使用不能】ハイパーリンク"""
+    GUID = 19
+    """GUID (グローバル一意識別子)"""
+
 class DataBaseCtrl():
     """データベース(.accdb)制御クラス
     """
@@ -376,6 +416,97 @@ class DataBaseCtrl():
         self.conn.commit()
         self.UpdateInternalDataFrame()
         return True
+
+    def AddColumn_DataBase(self, ColmunName:str, DataType:AccessDataType, param_list:list=[]) -> bool:
+        """データベースへ列を追加する。
+
+        Args:
+            ColmunName (str): 追加する行名
+            DataType (AccessDataType): データ型
+            param_list (list, optional): パラメータ. Defaults to [].
+
+        Returns:
+            bool: 成功=True / 失敗=False
+        
+        Remarks param_list:
+            DataType = CHAR: [max length]
+            DataType = VARCHAR: [max length]
+            (Not Available) DataType = DECIMAL: [total digits, digits after the decimal point]
+        
+        """
+        sql = f"ALTER TABLE {self.TableName} ADD COLUMN "            
+        if(DataType == AccessDataType.CHAR):
+            if(len(param_list) < 1):
+                self.err = Error.INVALID_INPUT
+                return False
+            sql += f"{ColmunName} {DataType.name}({param_list[0]});"
+        elif(DataType == AccessDataType.VARCHAR):
+            if(len(param_list) < 1):
+                self.err = Error.INVALID_INPUT
+                return False
+            sql += f"{ColmunName} {DataType.name}({param_list[0]});"
+        elif(DataType == AccessDataType.MEMO):
+            sql += f"{ColmunName} {DataType.name};"
+        elif(DataType == AccessDataType.BYTE):
+            sql += f"{ColmunName} {DataType.name};"
+        elif(DataType == AccessDataType.INTEGER):
+            sql += f"{ColmunName} {DataType.name};"
+        elif(DataType == AccessDataType.LONG):
+            sql += f"{ColmunName} {DataType.name};"
+        elif(DataType == AccessDataType.SINGLE):
+            sql += f"{ColmunName} {DataType.name};"
+        elif(DataType == AccessDataType.DOUBLE):
+            sql += f"{ColmunName} {DataType.name};"
+        elif(DataType == AccessDataType.CURRENCY):
+            sql += f"{ColmunName} {DataType.name};"
+        elif(DataType == AccessDataType.DECIMAL):
+            self.err = Error.INVALID_INPUT
+            return False
+            # if(len(param_list) < 2):
+            #     self.err = Error.INVALID_INPUT
+            #     return False
+            # sql += f"{ColmunName} {DataType.name}({param_list[0]},{param_list[1]});"
+        elif(DataType == AccessDataType.AUTOINCREMENT):
+            sql += f"{ColmunName} {DataType.name};"
+        elif(DataType == AccessDataType.DATE):
+            sql += f"{ColmunName} {DataType.name};"
+        elif(DataType == AccessDataType.TIME):
+            sql += f"{ColmunName} {DataType.name};"
+        elif(DataType == AccessDataType.DATETIME):
+            sql += f"{ColmunName} {DataType.name};"
+        elif(DataType == AccessDataType.TIMESTAMP):
+            sql += f"{ColmunName} {DataType.name};"
+        elif(DataType == AccessDataType.YESNO):
+            sql += f"{ColmunName} {DataType.name};"
+        elif(DataType == AccessDataType.OLEOBJECT):
+            sql += f"{ColmunName} {DataType.name};"
+        elif(DataType == AccessDataType.HYPERLINK):
+            self.err = Error.INVALID_INPUT
+            return False
+            #sql += f"{ColmunName} {DataType.name};"
+        elif(DataType == AccessDataType.GUID):
+            sql += f"{ColmunName} {DataType.name};"
+        else:
+            self.err = Error.INVALID_INPUT
+            return False
+                
+        self.cursor.execute(sql)
+        self.conn.commit()
+        return True    
+    
+    def DeleteColumn_DataBase(self, ColumnName:str) -> bool:
+        """データベースから列を削除する。
+
+        Args:
+            ColumnName (str): 削除する列名
+
+        Returns:
+            bool: 成功=True / 失敗=False
+        """
+        sql = f"ALTER TABLE {self.TableName} DROP COLUMN {ColumnName};"
+        self.cursor.execute(sql)
+        self.conn.commit()
+        return True          
     
     def __SelectSQL(self, Data:Dict[str,Any]=None) -> str:
         """SELECTのSQL
