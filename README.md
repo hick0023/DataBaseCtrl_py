@@ -4,7 +4,7 @@
 
 ## 使用方法
 
-```Sample
+```Sample Internal DataFrame mode
 from DataBaseCtrl import DataBaseCtrl, SerchCondition
 
 # インスタンス、クラス内データフレームモード
@@ -12,9 +12,11 @@ DB = DataBaseCtrl('DataBase File Path', 'TableName')
 
 # クラス内データフレームにデータベースを読み込む
 res = DB.UpdateInternalDataFrame()
+```
 
+```Sample Direct DataBase access mode
 # インスタンス、データベース直接アクセスモード（工事中）
 DB = DataBaseCtrl('DataBase File Path', 'TableName', True)
 ```
 
-その他、順次メソッドの説、説明を追加していきます。
+その他、順次メソッドの説明を追加していきます。
