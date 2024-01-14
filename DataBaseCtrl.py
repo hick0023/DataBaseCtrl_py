@@ -9,6 +9,7 @@ from decimal import Decimal
 from datetime import datetime
 
 wild_card = str.maketrans({'*':'%'})
+col_inf_params = ['Name','Type','N/A','Size','Tol','Scale','Flag']
 
 class Error(Enum):
     """エラーコード"""        
@@ -28,6 +29,12 @@ class Error(Enum):
     """無効な列名"""
     NO_ROW_EXIST = 7
     """行が存在しない"""
+    NOT_WORK_THIS_MODE = 8
+    """設定されたモードでは動作しない"""
+    SELECT_CONDITION_ERR = 9
+    """SQLでSELECTの条件エラー"""
+    DATA_NOT_UNIQUE_BY_ID = 10
+    """データがIDに対して固有ではない"""
     
 class SerchCondition(Enum):
     """検索条件"""
@@ -60,6 +67,8 @@ class DataRowState(Enum):
     """ 削除されている """
 
 class AccessDataType(Enum):
+    """Accessデータベース列のSQLデータ型
+    """
     CHAR = 1
     """固定長の文字列,Parm(最大文字数)"""
     VARCHAR = 2
@@ -143,6 +152,9 @@ class DataBaseCtrl():
         #接続
         self.conn = pyodbc.connect(self.strCon)
         self.cursor = self.conn.cursor()
+        #列情報の取得
+        self.__GetColumnNameFromDataBase()
+        self.err = Error.NO_ERR
         
     def __del__(self) -> None:
         """デストラクタ"""
@@ -161,20 +173,19 @@ class DataBaseCtrl():
         Returns:
             bool: 成功=True / 失敗=False
         """        
+        #直接データベースアクセスモードでは動作しない
+        if(self.DirectMode):
+            self.err = Error.NOT_WORK_THIS_MODE
+            return False
         #SQLでデータベースの読み取り
         sql = self.__SelectSQL()        
         self.cursor.execute(sql)
         res = self.cursor.fetchall()
         if(len(res)<1):
             self.err = Error.NO_DATA_IN_TABLE
-            return False
-        #行データの作成
-        column_inf = res[0].cursor_description       
-        self.Column_DF = pd.DataFrame(column_inf,None,['Name','Type','N/A','Size','Tol','Scale','Flag'])
+            return False        
         #データフレーム構築
-        df = pd.DataFrame(np.array(res), columns=[c for c in self.Column_DF['Name']])
-        if(type(set_index) == str):
-            self.Int_DF = df.set_index(set_index)
+        df = self.__SqlResultToDataFrame(res,set_index)        
         #データ行の状態データフレーム構築、イニシャライズ
         data_dict:Dict[str,List[Any]]={}                
         data_dict['ID'] = self.Int_DF.index.to_list()
@@ -195,6 +206,11 @@ class DataBaseCtrl():
         Remarks:
             行状態が削除のものはコピーされない
         """
+        #直接データベースアクセスモードでは動作しない
+        if(self.DirectMode):
+            self.err = Error.NOT_WORK_THIS_MODE
+            return pd.DataFrame()
+        #行StateがDeleted以外を返す。
         serch_ser = self.RowState_DF['RowState'] != DataRowState.Deleted        
         return self.Int_DF[serch_ser]
     
@@ -207,20 +223,27 @@ class DataBaseCtrl():
 
         Returns:
             pd.DataFrame: 検索結果
-        """        
-        if(type(Ext_DF) == type(None)):
-            Selected_DB = self.Int_DF           
-        else:
-            Selected_DB = Ext_DF
-        sel_ser = Selected_DB.index == ID
-        out_df:pd.DataFrame = Selected_DB[sel_ser]        
+        """
+        out_df = pd.DataFrame()        
+        if(self.DirectMode and type(Ext_DF) == type(None)):    #ダイレクトアクセスモードの場合
+            sql = self.__SelectSQL({"ID":ID})
+            self.cursor.execute(sql)
+            res = self.cursor.fetchall()
+            out_df = self.__SqlResultToDataFrame(res)
+        else: #クラス内データフレームモード            
+            if(type(Ext_DF) == type(None)):
+                Selected_DB = self.Int_DF           
+            else:
+                Selected_DB = Ext_DF
+            sel_ser = Selected_DB.index == ID
+            out_df = Selected_DB[sel_ser]        
         return out_df
     
     def SerchRows(self, SerchDict:Dict[str,Union[str,int,float,Decimal,bool]],
                   Serch_condition:SerchCondition=SerchCondition.Exact,
                   MultiSerch_Type:bool=True,
                   Ext_DF:pd.DataFrame=None) -> pd.DataFrame:
-        """検索条件で検索する。
+        """検索条件で行を検索する。
 
         Args:
             SerchDict (Dict[str,Union[str,int,float,Decimal,bool]]): 検索内容<列名,値>
@@ -234,56 +257,64 @@ class DataBaseCtrl():
         Remarks:
             検索内容は同じ列名(Key)で複数条件はできません。絞り込み検索は、一度出た結果を外部データフレームとして検索してください。        
         """      
-        #検索するデータフレーム       
-        if(type(Ext_DF) == type(None)):
-            df = self.Int_DF
-        elif(type(Ext_DF) == type(pd.DataFrame()) and not(Ext_DF.empty)):
-            df = Ext_DF
-        else:
-            self.err = Error.INVALID_INPUT
-            return pd.DataFrame() # Empty DataFrame
+        out_df = pd.DataFrame()
+        if(self.DirectMode and type(Ext_DF) == type(None)): #直接アクセスモード
+            sql = self.__SelectSQL(SerchDict, Serch_condition)
+            self.cursor.execute(sql)
+            res = self.cursor.fetchall()
+            out_df = self.__SqlResultToDataFrame(res)
+        else: #クラス内データフレームモード       
+            #検索するデータフレーム       
+            if(type(Ext_DF) == type(None)):
+                df = self.Int_DF
+            elif(type(Ext_DF) == type(pd.DataFrame()) and not(Ext_DF.empty)):
+                df = Ext_DF
+            else:
+                self.err = Error.INVALID_INPUT
+                return pd.DataFrame() # Empty DataFrame
         
-        #検索
-        SerchSeries:pd.Series[bool] = pd.Series()       
-        for key in SerchDict:            
-            serch:pd.Series[bool] = pd.Series()
-            if(Serch_condition == SerchCondition.Exact): #完全一致
-                serch = df[key] == SerchDict[key]
-            elif(Serch_condition == SerchCondition.StartWith): #～で始まる
-                if(type(SerchDict[key]) == str):
-                    serch = df[key].str.startswith(SerchDict[key])
-            elif(Serch_condition == SerchCondition.EndWith): #～で終わる
-                if(type(SerchDict[key]) == str):
-                    serch = df[key].str.endswith(SerchDict[key])
-            elif(Serch_condition == SerchCondition.Contains): #～を含む
-                if(type(SerchDict[key]) == str):
-                    serch = df[key].str.contains(SerchDict[key])
-            elif(Serch_condition == SerchCondition.SmallerThan): #~より小さい
-                if(type(SerchDict[key]) == int or type(SerchDict[key]) == float or type(SerchDict[key]) == Decimal):
-                    serch = df[key] < SerchDict[key]
-            elif(Serch_condition == SerchCondition.OrSmallerThan): #~以下
-                if(type(SerchDict[key]) == int or type(SerchDict[key]) == float or type(SerchDict[key]) == Decimal):
-                    serch = df[key] <= SerchDict[key]
-            elif(Serch_condition == SerchCondition.LargerThan): #~より大きい
-                if(type(SerchDict[key]) == int or type(SerchDict[key]) == float or type(SerchDict[key]) == Decimal):
-                    serch = df[key] > SerchDict[key]
-            elif(Serch_condition == SerchCondition.OrLargerThan): #~以上
-                if(type(SerchDict[key]) == int or type(SerchDict[key]) == float or type(SerchDict[key]) == Decimal):
-                    serch = df[key] >= SerchDict[key]
-            
-            #検索用Series[bool]合成演算
-            if(SerchSeries.empty and not(serch.empty)):
-              SerchSeries = serch
-            elif(not(SerchSeries.empty) and not(serch.empty)):
-                if(MultiSerch_Type):    
-                    SerchSeries = SerchSeries & serch
-                else:
-                    SerchSeries = SerchSeries | serch
+            #検索
+            SerchSeries:pd.Series[bool] = pd.Series()       
+            for key in SerchDict:            
+                serch:pd.Series[bool] = pd.Series()
+                if(Serch_condition == SerchCondition.Exact): #完全一致
+                    serch = df[key] == SerchDict[key]
+                elif(Serch_condition == SerchCondition.StartWith): #～で始まる
+                    if(type(SerchDict[key]) == str):
+                        serch = df[key].str.startswith(SerchDict[key])
+                elif(Serch_condition == SerchCondition.EndWith): #～で終わる
+                    if(type(SerchDict[key]) == str):
+                        serch = df[key].str.endswith(SerchDict[key])
+                elif(Serch_condition == SerchCondition.Contains): #～を含む
+                    if(type(SerchDict[key]) == str):
+                        serch = df[key].str.contains(SerchDict[key])
+                elif(Serch_condition == SerchCondition.SmallerThan): #~より小さい
+                    if(type(SerchDict[key]) == int or type(SerchDict[key]) == float or type(SerchDict[key]) == Decimal):
+                        serch = df[key] < SerchDict[key]
+                elif(Serch_condition == SerchCondition.OrSmallerThan): #~以下
+                    if(type(SerchDict[key]) == int or type(SerchDict[key]) == float or type(SerchDict[key]) == Decimal):
+                        serch = df[key] <= SerchDict[key]
+                elif(Serch_condition == SerchCondition.LargerThan): #~より大きい
+                    if(type(SerchDict[key]) == int or type(SerchDict[key]) == float or type(SerchDict[key]) == Decimal):
+                        serch = df[key] > SerchDict[key]
+                elif(Serch_condition == SerchCondition.OrLargerThan): #~以上
+                    if(type(SerchDict[key]) == int or type(SerchDict[key]) == float or type(SerchDict[key]) == Decimal):
+                        serch = df[key] >= SerchDict[key]
+                
+                #検索用Series[bool]合成演算
+                if(SerchSeries.empty and not(serch.empty)):
+                    SerchSeries = serch
+                elif(not(SerchSeries.empty) and not(serch.empty)):
+                    if(MultiSerch_Type):    
+                        SerchSeries = SerchSeries & serch
+                    else:
+                        SerchSeries = SerchSeries | serch
+            out_df = df[SerchSeries]
                     
-        return df[SerchSeries]
+        return out_df   
     
-    def UpdateRow_IntDataFrame(self, ID:Union[int,str], UpdateDict:Dict[str,Any]) -> bool:
-        """内部データフレームの行を更新（変更）する。
+    def UpdateRow(self, ID:Union[int,str], UpdateDict:Dict[str,Any]) -> bool:
+        """内部データフレームまたはデータベースの行を更新（変更）する。
 
         Args:
             ID (Union[int,str]): 変更する行のID
@@ -293,37 +324,65 @@ class DataBaseCtrl():
             bool: 成功=True / 失敗=False
             
         Remarks:
-            データベースは、内部データフレームでデータベースを更新（同期）させるまで変更されない。
+            データフレームモード: 内部データフレームが更新、データベースを更新（同期）させるまで変更されない。UpdateDataBase()
+            ダイレクトモード: データベースが直接更新される。
         """
-        #IDがIndexとなる行が存在するか確認        
-        if(self.Int_DF[self.Int_DF.index == ID].empty):
-            self.err = Error.NO_ROW_EXIST
-            return False
-        #行の更新        
-        for key in UpdateDict:             
-            ValueType = self.Column_DF[self.Column_DF['Name'] == key]['Type']
-            if(ValueType.empty):
-                self.err = Error.INVALID_COLUMN_NAME
+        ret_bool:bool
+        if(self.DirectMode):     #ダイレクトモード 
+            selected_df = self.SelectRowByID(ID)
+            #IDがIndexとなる行が存在するか確認、また固有かどうか
+            if(selected_df.empty):
+                self.err = Error.NO_ROW_EXIST
                 return False
-            if(type(UpdateDict[key]) != ValueType.values[0]):
-                self.err = Error.DATA_TYPE_MISMATCH
+            if(len(selected_df) != 1):
+                self.err = Error.DATA_NOT_UNIQUE_BY_ID
                 return False
-            #行の状態更新
-            if(self.RowState_DF.at[ID,'RowState'] == DataRowState.NotChange):
-                self.Int_DF.at[ID,key] = UpdateDict[key]
-                self.RowState_DF.at[ID,'RowState'] = DataRowState.Updated
-            elif(self.RowState_DF.at[ID,'RowState'] == DataRowState.Updated):
-                self.Int_DF.at[ID,key] = UpdateDict[key]
-                self.RowState_DF.at[ID,'RowState'] = DataRowState.Added
-            elif(self.RowState_DF.at[ID,'RowState'] == DataRowState.Added):
-                self.Int_DF.at[ID,key] = UpdateDict[key]
-            elif(self.RowState_DF.at[ID,'RowState'] == DataRowState.Deleted):
-                pass
+            #行の更新           
+            for key in UpdateDict:
+                ValueType = self.Column_DF[self.Column_DF[col_inf_params[0]] == key][col_inf_params[1]]
+                if(ValueType.empty):
+                    self.err = Error.INVALID_COLUMN_NAME
+                    return False
+                if(type(UpdateDict[key]) != ValueType.values[0]):
+                    self.err = Error.DATA_TYPE_MISMATCH
+                    return False
+                selected_df.at[ID,key] = UpdateDict[key]
+            sql = self.__UpdateSQL(selected_df)
+            self.cursor.execute(sql[0])
+            self.conn.commit()
+            ret_bool = True                    
             
-        return True
+        else:   #内部データフレームモード
+            #IDがIndexとなる行が存在するか確認        
+            if(self.Int_DF[self.Int_DF.index == ID].empty):
+                self.err = Error.NO_ROW_EXIST
+                return False
+            #行の更新        
+            for key in UpdateDict:             
+                ValueType = self.Column_DF[self.Column_DF[col_inf_params[0]] == key][col_inf_params[1]]
+                if(ValueType.empty):
+                    self.err = Error.INVALID_COLUMN_NAME
+                    return False
+                if(type(UpdateDict[key]) != ValueType.values[0]):
+                    self.err = Error.DATA_TYPE_MISMATCH
+                    return False
+                #行の状態更新
+                if(self.RowState_DF.at[ID,'RowState'] == DataRowState.NotChange):
+                    self.Int_DF.at[ID,key] = UpdateDict[key]
+                    self.RowState_DF.at[ID,'RowState'] = DataRowState.Updated
+                elif(self.RowState_DF.at[ID,'RowState'] == DataRowState.Updated):
+                    self.Int_DF.at[ID,key] = UpdateDict[key]
+                    self.RowState_DF.at[ID,'RowState'] = DataRowState.Updated
+                elif(self.RowState_DF.at[ID,'RowState'] == DataRowState.Added):
+                    self.Int_DF.at[ID,key] = UpdateDict[key]
+                elif(self.RowState_DF.at[ID,'RowState'] == DataRowState.Deleted):
+                    pass
+            ret_bool =True
             
-    def AddRow_IntDataFrame(self, AddDict:Dict[str,Any],ID:Union[int,str]=None) -> bool:
-        """内部データフレームに行を追加する。
+        return ret_bool
+            
+    def AddRow(self, AddDict:Dict[str,Any],ID:Union[int,str]=None) -> bool:
+        """内部データフレームまたはデータベースに行を追加する。
 
         Args:
             AddDict (Dict[str,Any]): 追加する内容<列名,値>
@@ -333,8 +392,10 @@ class DataBaseCtrl():
             bool: 成功=True / 失敗=False
         
         Remarks:
-            データベースは、内部データフレームでデータベースを更新（同期）させるまで変更されない。
+            データフレームモード: 内部データフレームへ追加、データベースを更新（同期）させるまで変更されない。UpdateDataBase()
+            ダイレクトモード: データベースが直接追加される。
         """
+        ret_bool:bool
         #データ型の確認
         for key in AddDict:
             ValueType = self.Column_DF[self.Column_DF['Name'] == key]['Type']
@@ -344,56 +405,85 @@ class DataBaseCtrl():
             if(type(AddDict[key]) != ValueType.values[0]):
                 self.err = Error.DATA_TYPE_MISMATCH
                 return False
-        #行の追加
-        if(type(ID) == type(None)):
-            new_id:Union[int,str] = self.Int_DF.index.max() + 1
-        else:
-            new_id = ID 
-        new_row = pd.DataFrame([AddDict],index=[new_id])
-        self.Int_DF = pd.concat([self.Int_DF,new_row])
-        self.RowState_DF.at[new_id,'RowState'] = DataRowState.Added
         
-        return True
+            
+        if(self.DirectMode):    #ダイレクトモード
+            new_row = pd.DataFrame([AddDict], columns=self.Column_DF[col_inf_params[0]])
+            new_row = new_row.set_index("ID")
+            sql = self.__InsertSQL(new_row)
+            self.cursor.execute(sql[0])
+            self.conn.commit()
+            ret_bool = True
+        else:   #内部データフレームモード
+            #行の追加
+            if(type(ID) == type(None)):
+                new_id:Union[int,str] = self.Int_DF.index.max() + 1
+            else:
+                new_id = ID
+            new_row = pd.DataFrame([AddDict],index=[new_id])
+            self.Int_DF = pd.concat([self.Int_DF,new_row])
+            self.RowState_DF.at[new_id,'RowState'] = DataRowState.Added
+            ret_bool = True
+        
+        return ret_bool
     
-    def DeleteRow_IntDataFrame(self, ID:Union[int,str], Del:bool=True) -> bool:
-        """内部データフレームの行を削除する。(RowStateのみ変更)
+    def DeleteRow(self, ID:Union[int,str], Del:bool=True) -> bool:
+        """内部データフレームまたはデータベースの行を削除する(RowStateのみ変更)。
 
         Args:
             ID (int, str): 削除する行ID
-            Del (bool, optional): 削除=True / 削除を解除=False. Defaults to True.
+            Del (bool, optional): 削除=True / 削除を解除=False、ダイレクトモードでは解除できない. Defaults to True.
 
         Returns:
             bool: 成功=True / 失敗=False
             
         Remarks:
-            データベースは、内部データフレームでデータベースを更新（同期）させるまで変更されない。\n
-            変更・追加した行は削除できない。一度データベースと同期をとった後削除してください。
+            データフレームモード: 内部データフレームから削除、データベースを更新（同期）させるまで変更されないUpdateDataBase()。変更・追加した行は削除できない。一度データベースと同期をとった後削除してください。
+            ダイレクトモード: データベースから直接削除される。            
         """
-        #IDがIndexとなる行が存在するか確認        
-        if(self.Int_DF.loc[ID].empty):
-            self.err = Error.NO_ROW_EXIST
-            return False
-        #行状態の変更
-        if(Del):
-            if(self.RowState_DF.at[ID,'RowState'] == DataRowState.NotChange):
-                self.RowState_DF.at[ID,'RowState'] = DataRowState.Deleted
-            elif(self.RowState_DF.at[ID,'RowState'] == DataRowState.Updated):
-                pass #アップデートした行は削除できない。一度データベースと同期をとってから削除してください
-            elif(self.RowState_DF.at[ID,'RowState'] == DataRowState.Added):
-                pass #追加した行は削除できない。一度データベースと同期をとってから削除してください
-            elif(self.RowState_DF.at[ID,'RowState'] == DataRowState.Deleted):
-                pass
-        else:
-            if(self.RowState_DF.at[ID,'RowState'] == DataRowState.Deleted):
-                self.RowState_DF.at[ID,'RowState'] = DataRowState.NotChange
-        return True
+        ret_bool:bool                
+        if(self.DirectMode):    #ダイレクトモード 
+            del_df = self.SelectRowByID(ID)
+            if(del_df.empty):
+                self.err = Error.NO_ROW_EXIST
+                return False
+            sql = self.__DeleteSQL(del_df)
+            self.cursor.execute(sql[0])
+            self.conn.commit()
+            ret_bool = True
+            
+        else:   #データフレームモード
+            #IDがIndexとなる行が存在するか確認        
+            if(self.Int_DF.loc[ID].empty):
+                self.err = Error.NO_ROW_EXIST
+                return False
+            #行状態の変更
+            if(Del):
+                if(self.RowState_DF.at[ID,'RowState'] == DataRowState.NotChange):
+                    self.RowState_DF.at[ID,'RowState'] = DataRowState.Deleted
+                elif(self.RowState_DF.at[ID,'RowState'] == DataRowState.Updated):
+                    pass #アップデートした行は削除できない。一度データベースと同期をとってから削除してください
+                elif(self.RowState_DF.at[ID,'RowState'] == DataRowState.Added):
+                    pass #追加した行は削除できない。一度データベースと同期をとってから削除してください
+                elif(self.RowState_DF.at[ID,'RowState'] == DataRowState.Deleted):
+                    pass
+            else:
+                if(self.RowState_DF.at[ID,'RowState'] == DataRowState.Deleted):
+                    self.RowState_DF.at[ID,'RowState'] = DataRowState.NotChange
+            ret_bool = True
+        
+        return ret_bool
     
     def UpdateDataBase(self) -> bool:
-        """データベースを内部DataFrameで更新する（同期）。
+        """データベースを内部DataFrameで更新する（同期）。ダイレクトモードでは動作しない。
 
         Returns:
             bool: 成功=True / 失敗=False
-        """        
+        """
+        #ダイレクトモードでは動作しない
+        if(self.DirectMode): 
+            self.err = Error.NOT_WORK_THIS_MODE
+            return False        
         sql_list:List[str] =[]
         #UpdateのSQL
         update_rows_ser = self.RowState_DF['RowState'] == DataRowState.Updated        
@@ -508,17 +598,23 @@ class DataBaseCtrl():
         self.conn.commit()
         return True          
     
-    def __SelectSQL(self, Data:Dict[str,Any]=None) -> str:
+    def __SelectSQL(self, Data:Dict[str,Any]=None,
+                    Serch_condition:SerchCondition=SerchCondition.Exact
+                    ) -> str:
         """SELECTのSQL
 
         Args:
             Data (Dict[str,Any], optional): 検索データ / Noneで全データ. Defaults to None.
+            Serch_condition (SerchCondition, optional):検索条件. Defaults to SerchCondition.Exact.
 
         Returns:
             str: SQLコマンド文字列
             
         Remarks:
             Data:検索データが文字列で*を含む場合は曖昧検索になる
+            
+        Todo:
+            OR検索の対応。現状はAND検索のみ対応
         """        
         sql_str = f'SELECT * FROM [{self.TableName}]'
         if(type(Data) == type(None)):
@@ -534,16 +630,62 @@ class DataBaseCtrl():
                 return ''
             if(i==0):
                 if(type(Data[key]) == int and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == int):
-                    sql_str += f' {key} = {Data[key]}'
+                    if(Serch_condition == SerchCondition.Exact):
+                        sql_str += f' {key} = {Data[key]}'
+                    elif(Serch_condition == SerchCondition.SmallerThan):
+                        sql_str += f' {key} < {Data[key]}'
+                    elif(Serch_condition == SerchCondition.OrSmallerThan):
+                        sql_str += f' {key} <= {Data[key]}'
+                    elif(Serch_condition == SerchCondition.LargerThan):
+                        sql_str += f' {key} > {Data[key]}'
+                    elif(Serch_condition == SerchCondition.OrLargerThan):
+                        sql_str += f' {key} >= {Data[key]}'
+                    else:
+                        self.err = Error.SELECT_CONDITION_ERR
+                        return ""
                 elif(type(Data[key]) == float and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == float):
-                    sql_str += f' {key} = {Data[key]}'
+                    if(Serch_condition == SerchCondition.Exact):
+                        sql_str += f' {key} = {Data[key]}'
+                    elif(Serch_condition == SerchCondition.SmallerThan):
+                        sql_str += f' {key} < {Data[key]}'
+                    elif(Serch_condition == SerchCondition.OrSmallerThan):
+                        sql_str += f' {key} <= {Data[key]}'
+                    elif(Serch_condition == SerchCondition.LargerThan):
+                        sql_str += f' {key} > {Data[key]}'
+                    elif(Serch_condition == SerchCondition.OrLargerThan):
+                        sql_str += f' {key} >= {Data[key]}'
+                    else:
+                        self.err = Error.SELECT_CONDITION_ERR
+                        return ""
                 elif(type(Data[key]) == Decimal and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == Decimal):
-                    sql_str += f' {key} = {Data[key]}'
+                    if(Serch_condition == SerchCondition.Exact):
+                        sql_str += f' {key} = {Data[key]}'
+                    elif(Serch_condition == SerchCondition.SmallerThan):
+                        sql_str += f' {key} < {Data[key]}'
+                    elif(Serch_condition == SerchCondition.OrSmallerThan):
+                        sql_str += f' {key} <= {Data[key]}'
+                    elif(Serch_condition == SerchCondition.LargerThan):
+                        sql_str += f' {key} > {Data[key]}'
+                    elif(Serch_condition == SerchCondition.OrLargerThan):
+                        sql_str += f' {key} >= {Data[key]}'
+                    else:
+                        self.err = Error.SELECT_CONDITION_ERR
+                        return ""
                 elif(type(Data[key]) == str and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == str):
                     if(str(Data[key]).find('*')>=0):                        
                         sql_str += f' {key} LIKE \'{str(Data[key]).translate(wild_card)}\''
                     else:
-                        sql_str += f' {key} = \'{Data[key]}\''
+                        if(Serch_condition == SerchCondition.Exact):
+                            sql_str += f' {key} = \'{Data[key]}\''
+                        elif(Serch_condition == SerchCondition.StartWith):
+                            sql_str += f" {key} LIKE \'{Data[key]}%\'"
+                        elif(Serch_condition == SerchCondition.EndWith):
+                            sql_str += f" {key} LIKE \'%{Data[key]}\'"
+                        elif(Serch_condition == SerchCondition.Contains):
+                            sql_str += f" {key} LIKE \'%{Data[key]}%\'"
+                        else:
+                            self.err = Error.SELECT_CONDITION_ERR
+                            return ""
                 elif(type(Data[key]) == bool and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == bool):
                     if(Data[key]):
                         sql_str += f' {key} = 1'
@@ -556,16 +698,62 @@ class DataBaseCtrl():
                     return ''
             else:
                 if(type(Data[key]) == int and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == int):
-                    sql_str += f' AND {key} = {Data[key]}'
+                    if(Serch_condition == SerchCondition.Exact):
+                        sql_str += f' AND {key} = {Data[key]}'
+                    elif(Serch_condition == SerchCondition.SmallerThan):
+                        sql_str += f' AND {key} < {Data[key]}'
+                    elif(Serch_condition == SerchCondition.OrSmallerThan):
+                        sql_str += f' AND {key} <= {Data[key]}'
+                    elif(Serch_condition == SerchCondition.LargerThan):
+                        sql_str += f' AND {key} > {Data[key]}'
+                    elif(Serch_condition == SerchCondition.OrLargerThan):
+                        sql_str += f' AND {key} >= {Data[key]}'
+                    else:
+                        self.err = Error.SELECT_CONDITION_ERR
+                        return ""                        
                 elif(type(Data[key]) == float and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == float):
-                    sql_str += f' AND {key} = {Data[key]}'
+                    if(Serch_condition == SerchCondition.Exact):
+                        sql_str += f' AND {key} = {Data[key]}'
+                    elif(Serch_condition == SerchCondition.SmallerThan):
+                        sql_str += f' AND {key} < {Data[key]}'
+                    elif(Serch_condition == SerchCondition.OrSmallerThan):
+                        sql_str += f' AND {key} <= {Data[key]}'
+                    elif(Serch_condition == SerchCondition.LargerThan):
+                        sql_str += f' AND {key} > {Data[key]}'
+                    elif(Serch_condition == SerchCondition.OrLargerThan):
+                        sql_str += f' AND {key} >= {Data[key]}'
+                    else:
+                        self.err = Error.SELECT_CONDITION_ERR
+                        return ""
                 elif(type(Data[key]) == Decimal and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == Decimal):
-                    sql_str += f' AND {key} = {Data[key]}'
+                    if(Serch_condition == SerchCondition.Exact):
+                        sql_str += f' AND {key} = {Data[key]}'
+                    elif(Serch_condition == SerchCondition.SmallerThan):
+                        sql_str += f' AND {key} < {Data[key]}'
+                    elif(Serch_condition == SerchCondition.OrSmallerThan):
+                        sql_str += f' AND {key} <= {Data[key]}'
+                    elif(Serch_condition == SerchCondition.LargerThan):
+                        sql_str += f' AND {key} > {Data[key]}'
+                    elif(Serch_condition == SerchCondition.OrLargerThan):
+                        sql_str += f' AND {key} >= {Data[key]}'
+                    else:
+                        self.err = Error.SELECT_CONDITION_ERR
+                        return ""
                 elif(type(Data[key]) == str and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == str):
                     if(str(Data[key]).find('*')>=0):                        
                         sql_str += f' AND {key} LIKE \'{str(Data[key]).translate(wild_card)}\''
                     else:
-                        sql_str += f' AND {key} = \'{Data[key]}\''
+                        if(Serch_condition == SerchCondition.Exact):
+                            sql_str += f' AND {key} = \'{Data[key]}\''
+                        elif(Serch_condition == SerchCondition.StartWith):
+                            sql_str += f' AND {key} LIKE \'{Data[key]}%\''
+                        elif(Serch_condition == SerchCondition.EndWith):
+                            sql_str += f' AND {key} LIKE \'%{Data[key]}\''
+                        elif(Serch_condition == SerchCondition.Contains):
+                            sql_str += f' AND {key} LIKE \'%{Data[key]}%\''
+                        else:
+                            self.err = Error.SELECT_CONDITION_ERR
+                            return ""
                 elif(type(Data[key]) == bool and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == bool):
                     if(Data[key]):
                         sql_str += f' AND {key} = 1'
@@ -646,7 +834,7 @@ class DataBaseCtrl():
             sql_col = '('
             sql_val = 'VALUES ('
             for i,col in enumerate(self.Column_DF.values.tolist()):              
-                if(i==0):
+                if(i==0 and Data.index.notna()[j]):
                     if(col[1]==int):
                         sql_col += f"{col[0]},"
                         sql_val += f"{Data.index[j]},"
@@ -726,4 +914,34 @@ class DataBaseCtrl():
             out_str_list.append(sql_str)
         
         return out_str_list                       
-        
+
+    def __SqlResultToDataFrame(self, Res:List[pyodbc.Row], set_index:Optional[str]='ID') -> pd.DataFrame:
+        """SQLの結果をデータフレームへ変換する
+
+        Args:
+            Res (List[pyodbc.Row]): SQLの結果
+            set_index (Optional[str], optional): インデックスにする行名. Defaults to 'ID'.
+
+        Returns:
+            pd.DataFrame: 変換後のデータフレーム
+        """
+        out_df = pd.DataFrame()
+        if(len(Res)<1):
+            self.err = Error.NO_DATA_IN_TABLE
+            return out_df        
+        #データフレーム構築
+        out_df = pd.DataFrame(np.array(Res,dtype=object), columns=[c for c in self.Column_DF[col_inf_params[0]]])
+        if(type(set_index) == str):
+            out_df = out_df.set_index(set_index)
+        return out_df
+    
+    def __GetColumnNameFromDataBase(self):
+        """データベースの列情報を取得してクラス内のDataFrameをアップデートする。
+        """
+        #TOP１行のみデータ取得
+        sql = f"SELECT TOP 1 * FROM {self.TableName};"
+        self.cursor.execute(sql)
+        res = self.cursor.fetchall()
+        #列データの作成
+        column_inf = res[0].cursor_description
+        self.Column_DF = pd.DataFrame(column_inf,None,col_inf_params)
