@@ -78,7 +78,7 @@ df = DataBase.SerchRows(yourSerch,
 ```
 
 - Args
-  - SerchDict : Dict [str,str|int|float|Decimal|bool] 
+  - SerchDict : Dict [str , str | int | float | Decimal | bool ]
     - 検索する行名と値のKey-Val Dictionary
     - 値は str | int | float | Decimal | bool (timedateを忘れているのでそのうち追加する)
   - SerchCondition : SerchCondition
@@ -109,4 +109,158 @@ class SerchCondition(Enum):
     LargerThan = 6      """~より大きい"""
     OrLargerThan = 7    """~以上"""  
 ```
-順次メソッドの説明は作成します。
+
+### 行を更新する
+
+```UpdateRow()
+update_dict:Dict[str,Any] = {"col1","A","col2","B","col3","24"}
+ID:int = 1
+res = DataBase.UpdateRow(ID,update_dict)
+```
+
+UpdateRow(ID:Union[int,str], UpdateDict:Dict[str,Any]) -> bool:
+内部データフレームまたはデータベースの行を更新（変更）する。
+
+- Args:
+  - ID (Union[int,str]): 変更する行のID
+  - UpdateDict (Dict[str,Any]): 変更する内容<列名,変更後の値>
+- Returns:
+  - bool: 成功=True / 失敗=False
+- Remarks:
+  - データフレームモード: 内部データフレームが更新、データベースを更新（同期）させるまで変更されない。UpdateDataBase()
+  - ダイレクトモード: データベースが直接更新される。
+
+### 行を追加する
+
+```AddRow()
+add_dict:Dict[str,Any] = {"col1","A","col2","B","col3","24"}
+ID:int = 1
+res = DataBase.AddRow(add_dict, ID)
+```
+
+AddRow(AddDict:Dict[str,Any],ID:Union[int,str]=None) -> bool:
+内部データフレームまたはデータベースに行を追加する。
+
+- Args:
+  - AddDict (Dict[str,Any]): 追加する内容<列名,値>
+  - ID (Union[int,str], optional): ID、Noneで自動取得. Defaults to None.
+- Returns:
+  - bool: 成功=True / 失敗=False
+- Remarks:
+  - データフレームモード: 内部データフレームへ追加、データベースを更新（同期）させるまで変更されない。UpdateDataBase()
+  - ダイレクトモード: データベースが直接追加される。
+
+### 行を削除する
+
+```DeleteRow()
+ID:int = 1
+res =DataBase.DeleteRow(ID)
+```
+
+DeleteRow(ID:Union[int,str], Del:bool=True) -> bool:
+内部データフレームまたはデータベースの行を削除する(RowStateのみ変更)。
+
+- Args:
+  - ID (int, str): 削除する行ID
+  - Del (bool, optional): 削除=True / 削除を解除=False、ダイレクトモードでは解除できない. Defaults to True.
+- Returns:
+  - bool: 成功=True / 失敗=False
+- Remarks:
+  - データフレームモード: 内部データフレームから削除、データベースを更新（同期）させるまで変更されないUpdateDataBase()。変更・追加した行は削除できない。一度データベースと同期をとった後削除してください。
+  - ダイレクトモード: データベースから直接削除される。
+
+### データベースを内部DataFrameで更新する（同期）
+
+```UpdateDataBase()
+res = DataBase.UpdateDataBase()
+```
+
+UpdateDataBase() -> bool:
+データベースを内部DataFrameで更新する（同期）。ダイレクトモードでは動作しない。
+
+- Returns:
+  - bool: 成功=True / 失敗=False
+
+### データベースへ列を追加する
+
+```AddColumn_DataBase()
+col_name:str = "A"
+dtype:AccessDataType = AccessDataType.VARCHAR
+param:list=[255]
+res = DataBase.AddColumn_DataBase(col_name, dtype, param)
+```
+
+AddColumn_DataBase(ColmunName:str, DataType:AccessDataType, param_list:list=[]) -> bool:
+データベースへ列を追加する。
+
+- Args:
+  - ColmunName (str): 追加する行名
+  - DataType (AccessDataType): データ型
+  - param_list (list, optional): パラメータ. Defaults to [].
+- Returns:
+  - bool: 成功=True / 失敗=False
+- Remarks param_list:
+  - DataType = CHAR: [max length]
+  - DataType = VARCHAR: [max length]
+  - (Not Available) DataType = DECIMAL: [total digits, digits after the decimal point]
+
+データタイプ（Enum）
+
+```class AccessDataType(Enum)
+class AccessDataType(Enum)
+ """Accessデータベース列のSQLデータ型
+    """
+    CHAR = 1
+    """固定長の文字列,Parm(最大文字数)"""
+    VARCHAR = 2
+    """可変長の文字列,Parm(最大文字数)"""
+    MEMO = 3
+    """長いテキストやメモ"""
+    BYTE = 4
+    """1 バイトの符号なし整数"""
+    INTEGER = 5
+    """2 バイトの符号付き整数"""
+    LONG = 6
+    """4 バイトの符号付き整数"""
+    SINGLE = 7
+    """単精度浮動小数点数"""
+    DOUBLE = 8
+    """倍精度浮動小数点数"""
+    CURRENCY = 9
+    """通貨型"""
+    DECIMAL = 10
+    """【使用不能】 固定小数点数,parm(全体の桁数,小数点以下の桁)"""
+    AUTOINCREMENT = 11
+    """自動増分の整数"""
+    DATE = 12
+    """日付のみ"""
+    TIME = 13
+    """時刻のみ"""
+    DATETIME = 14
+    """日付と時刻"""
+    TIMESTAMP = 15
+    """タイムスタンプ"""
+    YESNO = 16
+    """ブール型 (Yes/No)"""
+    OLEOBJECT = 17
+    """OLE オブジェクト"""
+    HYPERLINK = 18
+    """【使用不能】ハイパーリンク"""
+    GUID = 19
+    """GUID (グローバル一意識別子)"""
+```
+
+### データベースから列を削除する
+
+```DeleteColumn_DataBase()
+col_name:str = "A"
+res = DataBase.DeleteColumn_DataBase(col_name)
+```
+
+DeleteColumn_DataBase(ColumnName:str) -> bool:
+データベースから列を削除する。
+
+- Args:
+  - ColumnName (str): 削除する列名
+- Returns:
+  - bool: 成功=True / 失敗=False
