@@ -6,10 +6,10 @@ from typing import List,Dict,Any,Union,Optional
 import os
 from enum import Enum
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime,date,time
 
 wild_card = str.maketrans({'*':'%'})
-col_inf_params = ['Name','Type','N/A','Size','Tol','Scale','Flag']
+"""Wilde Card Translate"""
 
 class Error(Enum):
     """エラーコード"""        
@@ -107,6 +107,35 @@ class AccessDataType(Enum):
     """【使用不能】ハイパーリンク"""
     GUID = 19
     """GUID (グローバル一意識別子)"""
+    REAL = 20
+    """SINGLE"""
+    VARBINARY = 21
+    """拡張Datetime"""
+    
+Access_dtype_py:Dict[AccessDataType,Optional[type]] = {
+    AccessDataType.CHAR:str,
+    AccessDataType.VARCHAR:str,
+    AccessDataType.MEMO:str,
+    AccessDataType.BYTE:int,
+    AccessDataType.INTEGER:int,
+    AccessDataType.LONG:int,
+    AccessDataType.SINGLE:float,
+    AccessDataType.DOUBLE:float,
+    AccessDataType.CURRENCY:Decimal,
+    AccessDataType.DECIMAL:None,
+    AccessDataType.AUTOINCREMENT:int,
+    AccessDataType.DATE:datetime,
+    AccessDataType.TIME:datetime,
+    AccessDataType.DATETIME:datetime,
+    AccessDataType.TIMESTAMP:datetime,
+    AccessDataType.YESNO:bool,
+    AccessDataType.OLEOBJECT:bytearray,
+    AccessDataType.HYPERLINK:None,
+    AccessDataType.GUID:str,
+    AccessDataType.REAL:float,
+    AccessDataType.VARBINARY:bytearray
+}
+"""Access data type dict to python data type """
 
 class DataBaseCtrl():
     """データベース(.accdb)制御クラス
@@ -128,7 +157,28 @@ class DataBaseCtrl():
     cursor:Cursor = None
     """データベースカーソル"""
     err:Error
-    """エラーコード""" 
+    """エラーコード"""
+    col_inf_columns = [
+        'table_cat',
+        'table_schem',
+        'table_name',
+        'column_name',
+        'data_type',
+        'type_name',
+        'column_size',
+        'buffer_length',
+        'decimal_digits',
+        'num_prec_radix',
+        'nullable',
+        'remarks',
+        'column_def',
+        'sql_data_type',
+        'sql_datetime_sub',
+        'char_octet_length',
+        'ordinal_position',
+        'is_nullable',
+        'ordinal']
+    """Coulumns of Column DataFarme""" 
     
     def __init__(self, DataBase_Path:str, TableName:str, DirectMode:bool=False) -> None:
         """データベース(.accdb)制御クラス(コンストラクター)
@@ -146,14 +196,15 @@ class DataBaseCtrl():
         if(file_ext != '.accdb'):
             self.err = Error.FILE_TYPE_ERR
             return                
-        #SQLの作成
+        #SQL接続文字列作成
         self.strCon = 'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
         self.strCon += f'DBQ={DataBase_Path};'
         #接続
         self.conn = pyodbc.connect(self.strCon)
         self.cursor = self.conn.cursor()
         #列情報の取得
-        self.__GetColumnNameFromDataBase()
+        if(self.IsTableExist()):
+            self.__GetColumnNameFromDataBase()
         self.err = Error.NO_ERR
         
     def __del__(self) -> None:
@@ -339,11 +390,11 @@ class DataBaseCtrl():
                 return False
             #行の更新           
             for key in UpdateDict:
-                ValueType = self.Column_DF[self.Column_DF[col_inf_params[0]] == key][col_inf_params[1]]
+                ValueType = self.Column_DF[self.Column_DF[self.col_inf_columns[3]] == key][self.col_inf_columns[5]]
                 if(ValueType.empty):
                     self.err = Error.INVALID_COLUMN_NAME
                     return False
-                if(type(UpdateDict[key]) != ValueType.values[0]):
+                if(type(UpdateDict[key]) != Access_dtype_py[ValueType.values[0]]):
                     self.err = Error.DATA_TYPE_MISMATCH
                     return False
                 selected_df.at[ID,key] = UpdateDict[key]
@@ -359,7 +410,7 @@ class DataBaseCtrl():
                 return False
             #行の更新        
             for key in UpdateDict:             
-                ValueType = self.Column_DF[self.Column_DF[col_inf_params[0]] == key][col_inf_params[1]]
+                ValueType = self.Column_DF[self.Column_DF[self.col_inf_columns[3]] == key][self.col_inf_columns[5]]
                 if(ValueType.empty):
                     self.err = Error.INVALID_COLUMN_NAME
                     return False
@@ -380,6 +431,40 @@ class DataBaseCtrl():
             ret_bool =True
             
         return ret_bool
+    
+    def UpdateRowByDataFrame(self, df:pd.DataFrame) -> bool:
+        """データベースにDataFaremeで行を更新する。（今のところDirectモードのみ）
+
+        Args:
+            df (pd.DataFrame): 更新する行のデータフレーム（1行のみ）
+
+        Returns:
+            bool: 成功=True / 失敗=False
+        """
+        ret_bool:bool = False
+        df = df.replace([None],[float("nan")]).replace(["None"],[float("nan")]) #NoneをNaNに統一
+        df = df.dropna(axis=1) #空白列削除
+        if(self.DirectMode):    #ダイレクトモード
+            if len(df) == 1:
+                chk_id = df.index[0]
+                chk_df = self.SelectRowByID(chk_id) #データベースのレコード確認
+                if len(chk_df) > 0:                    
+                    chk_df = chk_df.replace([None],[float("nan")]).replace(["None"],[float("nan")]) #NoneをNaNに統一
+                    chk_df = chk_df.dropna(axis=1) #空白列削除
+                    drop_columns = list(set(chk_df.columns) - set(df.columns)) #既存データ列のうち変更データにない列
+                    chk_df = chk_df.drop(columns=drop_columns) #不要な列を落とす
+                    add_columns = list(set(df.columns) - set(chk_df.columns)) #変更データ列にあり既存データ列にない列
+                    if len(add_columns) > 0:
+                        add_df = pd.DataFrame(columns=add_columns, index=df.index) #追加するDF
+                        chk_df = pd.concat([chk_df,add_df],axis=1) #DF追加
+                        chk_df = chk_df[df.columns] #列の順番をそろえる
+                    update_df = df.T[df.T!=chk_df.T].T.dropna(axis=1).dropna(how="all") #変更するべきデータのみを抽出
+                    if not(update_df.empty):                  
+                        sql = self.__UpdateSQL(update_df)
+                        self.cursor.execute(sql[0])
+                        self.conn.commit()
+                        ret_bool = True           
+        return ret_bool
             
     def AddRow(self, AddDict:Dict[str,Any],ID:Union[int,str]=None) -> bool:
         """内部データフレームまたはデータベースに行を追加する。
@@ -395,21 +480,28 @@ class DataBaseCtrl():
             データフレームモード: 内部データフレームへ追加、データベースを更新（同期）させるまで変更されない。UpdateDataBase()
             ダイレクトモード: データベースが直接追加される。
         """
-        ret_bool:bool
+        ret_bool:bool        
         #データ型の確認
+        column_names = self.Column_DF[self.col_inf_columns[3]]
+        column_type_tag = self.col_inf_columns[5]
         for key in AddDict:
-            ValueType = self.Column_DF[self.Column_DF['Name'] == key]['Type']
+            ValueType = self.Column_DF[column_names == key][column_type_tag]
             if(ValueType.empty):
                 self.err = Error.INVALID_COLUMN_NAME
                 return False
-            if(type(AddDict[key]) != ValueType.values[0]):
+            if(type(AddDict[key]) != Access_dtype_py[ValueType.values[0]]):
                 self.err = Error.DATA_TYPE_MISMATCH
                 return False
         
             
         if(self.DirectMode):    #ダイレクトモード
-            new_row = pd.DataFrame([AddDict], columns=self.Column_DF[col_inf_params[0]])
-            new_row = new_row.set_index("ID")
+            if type(ID) == int or type(ID) == str:
+                AddDict[column_names.iloc[0]] = ID
+                new_row = pd.DataFrame([AddDict],columns=column_names)
+                new_row = new_row.set_index(column_names.iloc[0])
+            else:
+                new_row = pd.DataFrame([AddDict], columns=column_names)
+            
             sql = self.__InsertSQL(new_row)
             self.cursor.execute(sql[0])
             self.conn.commit()
@@ -423,6 +515,24 @@ class DataBaseCtrl():
             new_row = pd.DataFrame([AddDict],index=[new_id])
             self.Int_DF = pd.concat([self.Int_DF,new_row])
             self.RowState_DF.at[new_id,'RowState'] = DataRowState.Added
+            ret_bool = True
+        
+        return ret_bool
+    
+    def AddRowByDataFrame(self, df:pd.DataFrame) -> bool:
+        """データベースにDataFaremeで行を追加する。（今のところDirectモードのみ）
+
+        Args:
+            df (pd.DataFrame): 追加する行のデータフレーム
+
+        Returns:
+            bool: 成功=True / 失敗=False
+        """
+        ret_bool:bool
+        if(self.DirectMode):    #ダイレクトモード            
+            sql = self.__InsertSQL(df)
+            self.cursor.execute(sql[0])
+            self.conn.commit()
             ret_bool = True
         
         return ret_bool
@@ -582,6 +692,7 @@ class DataBaseCtrl():
                 
         self.cursor.execute(sql)
         self.conn.commit()
+        self.__GetColumnNameFromDataBase()
         return True    
     
     def DeleteColumn_DataBase(self, ColumnName:str) -> bool:
@@ -596,7 +707,36 @@ class DataBaseCtrl():
         sql = f"ALTER TABLE {self.TableName} DROP COLUMN {ColumnName};"
         self.cursor.execute(sql)
         self.conn.commit()
-        return True          
+        self.__GetColumnNameFromDataBase()
+        return True
+    
+    def AddTable_DataBase(self, PriKeyInf:tuple[str,AccessDataType], param:Optional[int]=None) -> bool:
+        """データベースにテーブルを追加する
+
+        Args:
+            PriKeyInf (tuple[str,AccessDataType]): プライマリKey情報tuple(列名,データ型)、通常列名は"ID"
+            param (Optional[int], optional): 文字列の場合文字数. Defaults to None.
+
+        Returns:
+            bool: 成功=True / 失敗=False
+        """
+        ret_bool:bool = False
+        sql:str
+        if self.IsTableExist():
+            ret_bool = False            
+        else:
+            if type(param) == type(None):
+                sql = f"CREATE TABLE {self.TableName} ({PriKeyInf[0]} {PriKeyInf[1].name} PRIMARY KEY);"
+            elif type(param) == int:
+                sql = f"CREATE TABLE {self.TableName} ({PriKeyInf[0]} {PriKeyInf[1].name}({param}) PRIMARY KEY);"
+            else:
+                sql=""
+            if len(sql) > 0:
+                self.cursor.execute(sql)
+                self.conn.commit()
+                self.__GetColumnNameFromDataBase()
+                ret_bool = True
+        return ret_bool
     
     def __SelectSQL(self, Data:Dict[str,Any]=None,
                     Serch_condition:SerchCondition=SerchCondition.Exact
@@ -616,6 +756,9 @@ class DataBaseCtrl():
         Todo:
             OR検索の対応。現状はAND検索のみ対応
         """        
+        col_name_tag = self.col_inf_columns[3]
+        column_names = self.Column_DF[col_name_tag]
+        col_type_tag = self.col_inf_columns[5]
         sql_str = f'SELECT * FROM [{self.TableName}]'
         if(type(Data) == type(None)):
             return sql_str
@@ -624,146 +767,80 @@ class DataBaseCtrl():
             return ''
                
         sql_str += ' WHERE'
-        for i,key in enumerate(Data):
-            if(not(key in self.Column_DF['Name'].to_list())):
+        for i,key in enumerate(Data):             
+            py_dtype = Access_dtype_py[self.Column_DF[column_names==key][col_type_tag][0]]
+            if(not(key in column_names.to_list())):
                 self.err = Error.INVALID_COLUMN_NAME
                 return ''
-            if(i==0):
-                if(type(Data[key]) == int and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == int):
-                    if(Serch_condition == SerchCondition.Exact):
-                        sql_str += f' {key} = {Data[key]}'
-                    elif(Serch_condition == SerchCondition.SmallerThan):
-                        sql_str += f' {key} < {Data[key]}'
-                    elif(Serch_condition == SerchCondition.OrSmallerThan):
-                        sql_str += f' {key} <= {Data[key]}'
-                    elif(Serch_condition == SerchCondition.LargerThan):
-                        sql_str += f' {key} > {Data[key]}'
-                    elif(Serch_condition == SerchCondition.OrLargerThan):
-                        sql_str += f' {key} >= {Data[key]}'
-                    else:
-                        self.err = Error.SELECT_CONDITION_ERR
-                        return ""
-                elif(type(Data[key]) == float and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == float):
-                    if(Serch_condition == SerchCondition.Exact):
-                        sql_str += f' {key} = {Data[key]}'
-                    elif(Serch_condition == SerchCondition.SmallerThan):
-                        sql_str += f' {key} < {Data[key]}'
-                    elif(Serch_condition == SerchCondition.OrSmallerThan):
-                        sql_str += f' {key} <= {Data[key]}'
-                    elif(Serch_condition == SerchCondition.LargerThan):
-                        sql_str += f' {key} > {Data[key]}'
-                    elif(Serch_condition == SerchCondition.OrLargerThan):
-                        sql_str += f' {key} >= {Data[key]}'
-                    else:
-                        self.err = Error.SELECT_CONDITION_ERR
-                        return ""
-                elif(type(Data[key]) == Decimal and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == Decimal):
-                    if(Serch_condition == SerchCondition.Exact):
-                        sql_str += f' {key} = {Data[key]}'
-                    elif(Serch_condition == SerchCondition.SmallerThan):
-                        sql_str += f' {key} < {Data[key]}'
-                    elif(Serch_condition == SerchCondition.OrSmallerThan):
-                        sql_str += f' {key} <= {Data[key]}'
-                    elif(Serch_condition == SerchCondition.LargerThan):
-                        sql_str += f' {key} > {Data[key]}'
-                    elif(Serch_condition == SerchCondition.OrLargerThan):
-                        sql_str += f' {key} >= {Data[key]}'
-                    else:
-                        self.err = Error.SELECT_CONDITION_ERR
-                        return ""
-                elif(type(Data[key]) == str and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == str):
-                    if(str(Data[key]).find('*')>=0):                        
-                        sql_str += f' {key} LIKE \'{str(Data[key]).translate(wild_card)}\''
-                    else:
-                        if(Serch_condition == SerchCondition.Exact):
-                            sql_str += f' {key} = \'{Data[key]}\''
-                        elif(Serch_condition == SerchCondition.StartWith):
-                            sql_str += f" {key} LIKE \'{Data[key]}%\'"
-                        elif(Serch_condition == SerchCondition.EndWith):
-                            sql_str += f" {key} LIKE \'%{Data[key]}\'"
-                        elif(Serch_condition == SerchCondition.Contains):
-                            sql_str += f" {key} LIKE \'%{Data[key]}%\'"
-                        else:
-                            self.err = Error.SELECT_CONDITION_ERR
-                            return ""
-                elif(type(Data[key]) == bool and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == bool):
-                    if(Data[key]):
-                        sql_str += f' {key} = 1'
-                    else:
-                        sql_str += f' {key} = 0'
-                elif(type(Data[key]) == datetime and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == datetime):
-                    sql_str += f' {key} = \'{datetime(Data[key]).strftime("%Y-%m-%d %H:%M:%S")}\''
+            if i > 0:
+                sql_str += " AND "                                
+            if type(Data[key]) == int and py_dtype == int:
+                if(Serch_condition == SerchCondition.Exact):
+                    sql_str += f' {key} = {Data[key]}'
+                elif(Serch_condition == SerchCondition.SmallerThan):
+                    sql_str += f' {key} < {Data[key]}'
+                elif(Serch_condition == SerchCondition.OrSmallerThan):
+                    sql_str += f' {key} <= {Data[key]}'
+                elif(Serch_condition == SerchCondition.LargerThan):
+                    sql_str += f' {key} > {Data[key]}'
+                elif(Serch_condition == SerchCondition.OrLargerThan):
+                    sql_str += f' {key} >= {Data[key]}'
                 else:
-                    self.err = Error.DATA_TYPE_MISMATCH
-                    return ''
+                    self.err = Error.SELECT_CONDITION_ERR
+                    return ""
+            elif type(Data[key]) == float and py_dtype == float:
+                if(Serch_condition == SerchCondition.Exact):
+                    sql_str += f' {key} = {Data[key]}'
+                elif(Serch_condition == SerchCondition.SmallerThan):
+                    sql_str += f' {key} < {Data[key]}'
+                elif(Serch_condition == SerchCondition.OrSmallerThan):
+                    sql_str += f' {key} <= {Data[key]}'
+                elif(Serch_condition == SerchCondition.LargerThan):
+                    sql_str += f' {key} > {Data[key]}'
+                elif(Serch_condition == SerchCondition.OrLargerThan):
+                    sql_str += f' {key} >= {Data[key]}'
+                else:
+                    self.err = Error.SELECT_CONDITION_ERR
+                    return ""
+            elif type(Data[key]) == Decimal and py_dtype == Decimal:
+                if(Serch_condition == SerchCondition.Exact):
+                    sql_str += f' {key} = {Data[key]}'
+                elif(Serch_condition == SerchCondition.SmallerThan):
+                    sql_str += f' {key} < {Data[key]}'
+                elif(Serch_condition == SerchCondition.OrSmallerThan):
+                    sql_str += f' {key} <= {Data[key]}'
+                elif(Serch_condition == SerchCondition.LargerThan):
+                    sql_str += f' {key} > {Data[key]}'
+                elif(Serch_condition == SerchCondition.OrLargerThan):
+                    sql_str += f' {key} >= {Data[key]}'
+                else:
+                    self.err = Error.SELECT_CONDITION_ERR
+                    return ""
+            elif type(Data[key]) == str and py_dtype == str:
+                if(str(Data[key]).find('*')>=0):                        
+                    sql_str += f' {key} LIKE \'{str(Data[key]).translate(wild_card)}\''
+                else:
+                    if(Serch_condition == SerchCondition.Exact):
+                        sql_str += f' {key} = \'{Data[key]}\''
+                    elif(Serch_condition == SerchCondition.StartWith):
+                        sql_str += f" {key} LIKE \'{Data[key]}%\'"
+                    elif(Serch_condition == SerchCondition.EndWith):
+                        sql_str += f" {key} LIKE \'%{Data[key]}\'"
+                    elif(Serch_condition == SerchCondition.Contains):
+                        sql_str += f" {key} LIKE \'%{Data[key]}%\'"
+                    else:
+                        self.err = Error.SELECT_CONDITION_ERR
+                        return ""
+            elif type(Data[key]) == bool and py_dtype == bool:
+                if(Data[key]):
+                    sql_str += f' {key} = 1'
+                else:
+                    sql_str += f' {key} = 0'
+            elif type(Data[key]) == datetime and py_dtype == datetime:
+                sql_str += f' {key} = \'{datetime(Data[key]).strftime("%Y-%m-%d %H:%M:%S")}\''
             else:
-                if(type(Data[key]) == int and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == int):
-                    if(Serch_condition == SerchCondition.Exact):
-                        sql_str += f' AND {key} = {Data[key]}'
-                    elif(Serch_condition == SerchCondition.SmallerThan):
-                        sql_str += f' AND {key} < {Data[key]}'
-                    elif(Serch_condition == SerchCondition.OrSmallerThan):
-                        sql_str += f' AND {key} <= {Data[key]}'
-                    elif(Serch_condition == SerchCondition.LargerThan):
-                        sql_str += f' AND {key} > {Data[key]}'
-                    elif(Serch_condition == SerchCondition.OrLargerThan):
-                        sql_str += f' AND {key} >= {Data[key]}'
-                    else:
-                        self.err = Error.SELECT_CONDITION_ERR
-                        return ""                        
-                elif(type(Data[key]) == float and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == float):
-                    if(Serch_condition == SerchCondition.Exact):
-                        sql_str += f' AND {key} = {Data[key]}'
-                    elif(Serch_condition == SerchCondition.SmallerThan):
-                        sql_str += f' AND {key} < {Data[key]}'
-                    elif(Serch_condition == SerchCondition.OrSmallerThan):
-                        sql_str += f' AND {key} <= {Data[key]}'
-                    elif(Serch_condition == SerchCondition.LargerThan):
-                        sql_str += f' AND {key} > {Data[key]}'
-                    elif(Serch_condition == SerchCondition.OrLargerThan):
-                        sql_str += f' AND {key} >= {Data[key]}'
-                    else:
-                        self.err = Error.SELECT_CONDITION_ERR
-                        return ""
-                elif(type(Data[key]) == Decimal and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == Decimal):
-                    if(Serch_condition == SerchCondition.Exact):
-                        sql_str += f' AND {key} = {Data[key]}'
-                    elif(Serch_condition == SerchCondition.SmallerThan):
-                        sql_str += f' AND {key} < {Data[key]}'
-                    elif(Serch_condition == SerchCondition.OrSmallerThan):
-                        sql_str += f' AND {key} <= {Data[key]}'
-                    elif(Serch_condition == SerchCondition.LargerThan):
-                        sql_str += f' AND {key} > {Data[key]}'
-                    elif(Serch_condition == SerchCondition.OrLargerThan):
-                        sql_str += f' AND {key} >= {Data[key]}'
-                    else:
-                        self.err = Error.SELECT_CONDITION_ERR
-                        return ""
-                elif(type(Data[key]) == str and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == str):
-                    if(str(Data[key]).find('*')>=0):                        
-                        sql_str += f' AND {key} LIKE \'{str(Data[key]).translate(wild_card)}\''
-                    else:
-                        if(Serch_condition == SerchCondition.Exact):
-                            sql_str += f' AND {key} = \'{Data[key]}\''
-                        elif(Serch_condition == SerchCondition.StartWith):
-                            sql_str += f' AND {key} LIKE \'{Data[key]}%\''
-                        elif(Serch_condition == SerchCondition.EndWith):
-                            sql_str += f' AND {key} LIKE \'%{Data[key]}\''
-                        elif(Serch_condition == SerchCondition.Contains):
-                            sql_str += f' AND {key} LIKE \'%{Data[key]}%\''
-                        else:
-                            self.err = Error.SELECT_CONDITION_ERR
-                            return ""
-                elif(type(Data[key]) == bool and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == bool):
-                    if(Data[key]):
-                        sql_str += f' AND {key} = 1'
-                    else:
-                        sql_str += f' AND {key} = 0'
-                elif(type(Data[key]) == datetime and self.Column_DF[self.Column_DF['Name']==key]['Type'].to_list()[0] == datetime):
-                    sql_str += f' AND {key} = \'{datetime(Data[key]).strftime("%Y-%m-%d %H:%M:%S")}\''
-                else:
-                    self.err = Error.DATA_TYPE_MISMATCH
-                    return ''
+                self.err = Error.DATA_TYPE_MISMATCH
+                return ''            
         sql_str = sql_str + ';'
         return sql_str
         
@@ -777,40 +854,62 @@ class DataBaseCtrl():
             List[str]: SQLコマンド文字列リスト
         """
         out_str_list:List[str] = []      
-        if(Data.empty):
+        col_name_ser = self.Column_DF[self.col_inf_columns[3]]
+        sql_Data = Data.replace([None],float("nan")).replace(["None"],float("nan"))
+        sql_Data = sql_Data.dropna(axis=1)
+        if(sql_Data.empty):
             self.err = Error.INVALID_INPUT
-            return []        
-        for j,row in enumerate(Data.values.tolist()):
+            return []              
+        for row in sql_Data.iterrows():
             sql_str = f'UPDATE [{self.TableName}] SET'
-            for i,col in enumerate(self.Column_DF.values.tolist()):
-                if(i>0):
-                    if(type(row[i-1]) != type(None)):                    
-                        if(col[1]==int):                        
-                            sql_str += f' {col[0]} = {row[i-1]},'
-                        elif(col[1]==float):
-                            sql_str += f' {col[0]} = {row[i-1]},'
-                        elif(col[1]==Decimal):
-                            sql_str += f' {col[0]} = {row[i-1]},'
-                        elif(col[1]==str):
-                            sql_str += f' {col[0]} = \'{row[i-1]}\','
-                        elif(col[1]==bool):
-                            if(row[i-1]):
-                                sql_str += f' {col[0]} = 1,'
-                            else:
-                                sql_str += f' {col[0]} = 0,'
-                        elif(col[1]==datetime):
-                            if(pd.notna(row[i-1])):                        
-                                time_stamp:pd.Timestamp = row[i-1]                        
-                                date_py = time_stamp.to_pydatetime()
-                                sql_str += f' {col[0]} = \'{date_py.strftime("%Y-%m-%d")}\','
-                        else:
-                            self.err = Error.UNDEFINED_DATA_TYPE
-                        
-            id_val:Union[int,str] = Data.index.to_list()[j]
-            if(type(id_val) == int):
-                sql_str = sql_str[0:-1] + f' WHERE {self.Column_DF.values.tolist()[0][0]} = {id_val};'
-            elif(type(id_val) == str):
-                sql_str = sql_str[0:-1] + f' WHERE {self.Column_DF.values.tolist()[0][0]} = \'{id_val}\';'
+            idx = row[0]
+            content_ser = row[1]
+            for col,val in content_ser.items():                
+                AccCol_dtype = self.Column_DF[col_name_ser == col][self.col_inf_columns[5]].values[0]
+                if(AccCol_dtype == AccessDataType.CHAR or
+                   AccCol_dtype == AccessDataType.VARCHAR or
+                   AccCol_dtype == AccessDataType.MEMO or
+                   AccCol_dtype == AccessDataType.GUID):                        
+                    sql_str += f' {col} = \'{val}\','
+                elif(AccCol_dtype == AccessDataType.BYTE or
+                     AccCol_dtype == AccessDataType.INTEGER or
+                     AccCol_dtype == AccessDataType.LONG or
+                     AccCol_dtype == AccessDataType.AUTOINCREMENT):
+                    sql_str += f' {col} = {val},'
+                elif(AccCol_dtype == AccessDataType.SINGLE or 
+                     AccCol_dtype == AccessDataType.DOUBLE or
+                     AccCol_dtype == AccessDataType.REAL):
+                    sql_str += f' {col} = {val},'
+                elif(AccCol_dtype == AccessDataType.CURRENCY):
+                    sql_str += f' {col} = {val},'
+                elif(AccCol_dtype == AccessDataType.DATE):
+                    datetime_py:date = val
+                    sql_str += f' {col} = \'{datetime_py.strftime("%Y/%m/%d")}\','
+                elif(AccCol_dtype == AccessDataType.TIME):                    
+                    datetime_py:time = val
+                    sql_str += f' {col} = \'{datetime_py.strftime("%H:%M:%S")}\','
+                elif(AccCol_dtype == AccessDataType.DATETIME):                    
+                    datetime_py:datetime = val
+                    sql_str += f' {col} = \'{datetime_py.strftime("%Y/%m/%d %H:%M:%S")}\','
+                elif(AccCol_dtype == AccessDataType.TIMESTAMP):
+                    sql_str += f' {col} = \'{val}\','                
+                elif(AccCol_dtype == AccessDataType.YESNO):
+                    if(val):
+                        sql_str += f' {col[0]} = 1,'
+                    else:
+                        sql_str += f' {col[0]} = 0,'
+                elif(AccCol_dtype == AccessDataType.OLEOBJECT):
+                    sql_str += f' {col} = {val},'
+                elif(AccCol_dtype == AccessDataType.VARBINARY):
+                    datetime_py:time = val
+                    sql_str += f' {col} = \'{datetime_py.strftime("%H:%M:%S.%f")}\','                                                  
+                else:
+                    self.err = Error.UNDEFINED_DATA_TYPE
+                    return [""]
+            if(type(idx) == int):
+                sql_str = sql_str[0:-1] + f' WHERE {sql_Data.index.name} = {idx};'
+            elif(type(idx) == str):
+                sql_str = sql_str[0:-1] + f' WHERE {sql_Data.index.name} = \'{idx}\';'
             
             out_str_list.append(sql_str)
         return out_str_list
@@ -823,67 +922,80 @@ class DataBaseCtrl():
 
         Returns:
             List[str]: SQLコマンド文字列リスト
-        """
-        blank_value='NULL'
-        out_str_list:List[str] = []      
-        if(Data.empty):
+        """        
+        out_str_list:List[str] = []
+        col_name_ser = self.Column_DF[self.col_inf_columns[3]]
+        col_dtype_tag = self.col_inf_columns[5]
+        sql_Data = Data.replace([None],float("nan")).replace(["None"],float("nan"))
+        sql_Data = sql_Data.dropna(axis=1)      
+        if(sql_Data.empty):
             self.err = Error.INVALID_INPUT
             return []
-        for j,row in enumerate(Data.values.tolist()):
+        for row in sql_Data.iterrows():
+            idx = row[0]
+            content_ser = row[1]
             sql_str = f'INSERT INTO [{self.TableName}]'
             sql_col = '('
             sql_val = 'VALUES ('
-            for i,col in enumerate(self.Column_DF.values.tolist()):              
-                if(i==0 and Data.index.notna()[j]):
-                    if(col[1]==int):
-                        sql_col += f"{col[0]},"
-                        sql_val += f"{Data.index[j]},"
-                    elif(col[1]==str):
-                        sql_col += f"{col[0]},"
-                        sql_val += f"\'{Data.index[j]}\',"
-                elif(i>0):
-                    if(col[1]==int):
-                        sql_col += f'{col[0]}, '
-                        if(pd.notna(row[i-1])):
-                            sql_val += f'{row[i-1]}, '                            
-                        else:
-                            sql_val += f'{blank_value}, '                            
-                    elif(col[1]==float):
-                        sql_col += f'{col[0]}, '
-                        if(pd.notna(row[i-1])):
-                            sql_val += f'{row[i-1]}, '                            
-                        else:
-                            sql_val += f'{blank_value}, '
-                    elif(col[1]==Decimal):
-                        sql_col += f'{col[0]}, '
-                        if(pd.notna(row[i-1])):
-                            sql_val += f'{row[i-1]}, '                            
-                        else:
-                            sql_val += f'{blank_value}, '
-                    elif(col[1]==str):
-                        sql_col += f'{col[0]}, '
-                        if(pd.notna(row[i-1])):
-                            sql_val += f'\'{row[i-1]}\', '                            
-                        else:
-                            sql_val += f'{blank_value}, '                            
-                    elif(col[1]==bool):
-                        if(not(pd.notna(row[i-1]))):
-                            sql_col += f'{col[0]}, '
-                            sql_val += f'{blank_value}, '
-                        elif(row[i-1]):
-                            sql_col += f'{col[0]}, '
-                            sql_val += '1, '
-                        elif(not(row[i-1])):
-                            sql_col += f'{col[0]}, '
-                            sql_val += '0, '
-                    elif(col[1]==datetime):
-                        sql_col += f'{col[0]}, '
-                        if(pd.notna(row[i-1])):
-                            sql_val += f'\'{datetime(row[i-1]).strftime("%Y-%m-%d %H:%M:%S")}\', '                            
-                        else:
-                            sql_val += f'{blank_value}, '
-                    else:
-                        self.err = Error.UNDEFINED_DATA_TYPE
+            if type(idx) == int:
+                sql_col += f"{sql_Data.index.name},"
+                sql_val += f"{idx}"
+            elif type(idx) == str:
+                sql_col += f"{sql_Data.index.name},"
+                sql_val += f"\'{idx}\',"                            
+            for col,val in content_ser.items():                
+                AccCol_dtype = self.Column_DF[col_name_ser == col][col_dtype_tag].values[0]
+                if(AccCol_dtype == AccessDataType.CHAR or
+                   AccCol_dtype == AccessDataType.VARCHAR or
+                   AccCol_dtype == AccessDataType.MEMO or
+                   AccCol_dtype == AccessDataType.GUID):
+                    sql_col += f'{col}, '
+                    sql_val += f'\'{val}\', '
+                elif(AccCol_dtype == AccessDataType.BYTE or
+                     AccCol_dtype == AccessDataType.INTEGER or
+                     AccCol_dtype == AccessDataType.LONG or
+                     AccCol_dtype == AccessDataType.AUTOINCREMENT):
+                    sql_col += f'{col}, '
+                    sql_val += f'{val}, '                    
+                elif(AccCol_dtype == AccessDataType.SINGLE or 
+                     AccCol_dtype == AccessDataType.DOUBLE or
+                     AccCol_dtype == AccessDataType.REAL):
+                    sql_col += f'{col}, '
+                    sql_val += f'{val}, '                    
+                elif(AccCol_dtype == AccessDataType.CURRENCY):
+                    sql_col += f'{col}, '
+                    sql_val += f'{val}, '
+                elif(AccCol_dtype == AccessDataType.DATE):
+                    datetime_py:date = val
+                    sql_col += f'{col}, '
+                    sql_val += f' \'{datetime_py.strftime("%Y/%m/%d")}\', '
+                elif(AccCol_dtype == AccessDataType.TIME):                    
+                    datetime_py:time = val
+                    sql_col += f'{col}, '
+                    sql_val += f'\'{datetime_py.strftime("%H:%M:%S")}\', '
+                elif(AccCol_dtype == AccessDataType.DATETIME):                    
+                    datetime_py:datetime = val
+                    sql_col += f'{col}, '
+                    sql_val += f'\'{datetime_py.strftime("%Y/%m/%d %H:%M:%S")}\', '
+                elif(AccCol_dtype == AccessDataType.TIMESTAMP):
+                    sql_col += f'{col}, '
+                    sql_val += f'\'{val}\', ' 
+                elif(AccCol_dtype == AccessDataType.YESNO):                    
+                    if(val):
+                        sql_col += f'{col}, '
+                        sql_val += '1, '
+                    elif(not(val)):
+                        sql_col += f'{col}, '
+                        sql_val += '0, '
+                elif(AccCol_dtype == AccessDataType.OLEOBJECT):
+                    sql_col += f'{col}, '
+                    sql_val += f'{val}, '
+                elif(AccCol_dtype == AccessDataType.VARBINARY):
+                    sql_col += f'{col}, '
+                    sql_val += f'\'{datetime_py.strftime("%H:%M:%S.%f")}\', '
+                  
+                else:
+                    self.err = Error.UNDEFINED_DATA_TYPE
             sql_col = sql_col[0:-2] + ')'
             sql_val = sql_val[0:-2] + ')'
             sql_str = f'{sql_str} {sql_col} {sql_val};'
@@ -899,18 +1011,20 @@ class DataBaseCtrl():
         Returns:
             List[str]: SQLコマンド文字列リスト
         """
-        out_str_list:List[str] = []      
+        out_str_list:List[str] = []            
         if(Data.empty):
             self.err = Error.INVALID_INPUT
             return out_str_list
-        for row_idx in Data.index.tolist():
+        for row in Data.iterrows():
+            idx = row[0]
+            content_ser = row[1]
             sql_str = f'DELETE FROM [{self.TableName}] '
             sql_str += 'WHERE '
-            sql_str += f'{self.Column_DF.values[0][0]} = '
-            if(type(row_idx)==int):
-                sql_str += f'{row_idx};'
-            elif(type(row_idx)==str):
-                sql_str += f'\'{row_idx}\';'
+            sql_str += f'{Data.index.name} = '
+            if(type(idx)==int):
+                sql_str += f'{idx};'
+            elif(type(idx)==str):
+                sql_str += f'\'{idx}\';'
             out_str_list.append(sql_str)
         
         return out_str_list                       
@@ -930,18 +1044,37 @@ class DataBaseCtrl():
             self.err = Error.NO_DATA_IN_TABLE
             return out_df        
         #データフレーム構築
-        out_df = pd.DataFrame(np.array(Res,dtype=object), columns=[c for c in self.Column_DF[col_inf_params[0]]])
+        out_df = pd.DataFrame(np.array(Res,dtype=object), columns=[c for c in self.Column_DF[self.col_inf_columns[3]]])
         if(type(set_index) == str):
             out_df = out_df.set_index(set_index)
         return out_df
     
     def __GetColumnNameFromDataBase(self):
         """データベースの列情報を取得してクラス内のDataFrameをアップデートする。
+        """        
+        cols_inf = self.cursor.columns(table=self.TableName)
+        cols_inf_res = cols_inf.fetchall()           
+        self.Column_DF = pd.DataFrame(np.array(cols_inf_res),columns=self.col_inf_columns)
+        for row in self.Column_DF.iterrows():
+            for access_dtype in AccessDataType:
+                if self.Column_DF.loc[row[0],self.col_inf_columns[5]] == access_dtype.name:
+                    self.Column_DF.loc[row[0],self.col_inf_columns[5]] = access_dtype
+        
+    def IsTableExist(self) -> bool:
+        """データテーブルが存在するかどうか確認する。
+
+        Returns:
+            bool: 存在する=True | 存在しない=False
         """
-        #TOP１行のみデータ取得
-        sql = f"SELECT TOP 1 * FROM {self.TableName};"
-        self.cursor.execute(sql)
-        res = self.cursor.fetchall()
-        #列データの作成
-        column_inf = res[0].cursor_description
-        self.Column_DF = pd.DataFrame(column_inf,None,col_inf_params)
+        ret_bool:bool
+        try:
+            self.cursor.columns(table=self.TableName)            
+            res = self.cursor.fetchall()
+            if len(res) < 1:
+                ret_bool = False
+            else:
+                ret_bool = True
+        except pyodbc.ProgrammingError:
+            ret_bool = False
+        return ret_bool
+        
