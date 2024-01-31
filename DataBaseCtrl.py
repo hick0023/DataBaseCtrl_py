@@ -198,10 +198,14 @@ class DataBaseCtrl():
             return                
         #SQL接続文字列作成
         self.strCon = 'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-        self.strCon += f'DBQ={DataBase_Path};'
+        self.strCon += f'DBQ={DataBase_Path};'        
         #接続
         self.conn = pyodbc.connect(self.strCon)
-        self.cursor = self.conn.cursor()
+        # ODBCドライバーに送信する属性を指定する
+        #attrs_before = {pyodbc.SQL_MAX_COLUMNS_IN_SELECT: 255}
+        #self.conn.set_attr(pyodbc.SQL_MAX_COLUMNS_IN_SELECT,255)
+        #self.conn = pyodbc.connect(self.strCon,attrs_before=attrs_before)
+        self.cursor = self.conn.cursor()                    
         #列情報の取得
         if(self.IsTableExist()):
             self.__GetColumnNameFromDataBase()
@@ -265,11 +269,11 @@ class DataBaseCtrl():
         serch_ser = self.RowState_DF['RowState'] != DataRowState.Deleted        
         return self.Int_DF[serch_ser]
     
-    def SelectRowByID(self, ID:Union[int,str], Ext_DF:pd.DataFrame=None) -> pd.DataFrame:
+    def SelectRowByID(self, ID:Union[int,str,None], Ext_DF:pd.DataFrame=None) -> pd.DataFrame:
         """IDでデータフレームの行を検索（IDがKEYインデクスになっている場合）
 
         Args:
-            ID (int, str): ID
+            ID (int, str, None): ID, "*" or Noneで全検索
             Ext_DF (pd.DataFrame, optional): 検索する外部データフレーム、Noneで内部データフレーム. Defaults to None.
 
         Returns:
@@ -277,10 +281,14 @@ class DataBaseCtrl():
         """
         out_df = pd.DataFrame()        
         if(self.DirectMode and type(Ext_DF) == type(None)):    #ダイレクトアクセスモードの場合
-            sql = self.__SelectSQL({"ID":ID})
+            if ID =="*":
+                sql = self.__SelectSQL()
+            else:
+                sql = self.__SelectSQL({"ID":ID})
             self.cursor.execute(sql)
             res = self.cursor.fetchall()
             out_df = self.__SqlResultToDataFrame(res)
+            out_df = out_df.replace([None],[float("nan")]).replace(["None"],[float("nan")])
         else: #クラス内データフレームモード            
             if(type(Ext_DF) == type(None)):
                 Selected_DB = self.Int_DF           
