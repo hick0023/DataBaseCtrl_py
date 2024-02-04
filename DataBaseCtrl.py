@@ -471,9 +471,9 @@ class DataBaseCtrl():
                         chk_df = chk_df[df.columns] #列の順番をそろえる
                     update_df = df.T[df.T!=chk_df.T].T.dropna(axis=1).dropna(how="all") #変更するべきデータのみを抽出
                     if not(update_df.empty):                  
-                        sql = self.__UpdateSQL(update_df)
-                        if len(sql[0]) > 0:
-                            self.cursor.execute(sql[0])
+                        sql_list = self.__UpdateSQL(update_df)
+                        for sql in sql_list:                        
+                            self.cursor.execute(sql)
                             self.conn.commit()
                             ret_bool = True           
         return ret_bool
@@ -865,6 +865,7 @@ class DataBaseCtrl():
         Returns:
             List[str]: SQLコマンド文字列リスト
         """
+        max_colmun_length:int = 127
         out_str_list:List[str] = []      
         col_name_ser = self.Column_DF[self.col_inf_columns[3]]
         sql_Data = Data.replace([None],float("nan")).replace(["None"],float("nan"))
@@ -873,60 +874,69 @@ class DataBaseCtrl():
             self.err = Error.INVALID_INPUT
             return [] 
         if sql_Data.shape[0] < 1 or sql_Data.shape[1] < 1:
-            return[]                     
-        for row in sql_Data.iterrows():
-            sql_str = f'UPDATE [{self.TableName}] SET'
-            idx = row[0]
-            content_ser = row[1]
-            for col,val in content_ser.items():                
-                AccCol_dtype = self.Column_DF[col_name_ser == col][self.col_inf_columns[5]].values[0]
-                if(AccCol_dtype == AccessDataType.CHAR or
-                   AccCol_dtype == AccessDataType.VARCHAR or
-                   AccCol_dtype == AccessDataType.MEMO or
-                   AccCol_dtype == AccessDataType.GUID):                        
-                    sql_str += f' {col} = \'{val}\','
-                elif(AccCol_dtype == AccessDataType.BYTE or
-                     AccCol_dtype == AccessDataType.INTEGER or
-                     AccCol_dtype == AccessDataType.LONG or
-                     AccCol_dtype == AccessDataType.AUTOINCREMENT):
-                    sql_str += f' {col} = {val},'
-                elif(AccCol_dtype == AccessDataType.SINGLE or 
-                     AccCol_dtype == AccessDataType.DOUBLE or
-                     AccCol_dtype == AccessDataType.REAL):
-                    sql_str += f' {col} = {val},'
-                elif(AccCol_dtype == AccessDataType.CURRENCY):
-                    sql_str += f' {col} = {val},'
-                elif(AccCol_dtype == AccessDataType.DATE):
-                    datetime_py:date = val
-                    sql_str += f' {col} = \'{datetime_py.strftime("%Y/%m/%d")}\','
-                elif(AccCol_dtype == AccessDataType.TIME):                    
-                    datetime_py:time = val
-                    sql_str += f' {col} = \'{datetime_py.strftime("%H:%M:%S")}\','
-                elif(AccCol_dtype == AccessDataType.DATETIME):                    
-                    datetime_py:datetime = val
-                    sql_str += f' {col} = \'{datetime_py.strftime("%Y/%m/%d %H:%M:%S")}\','
-                elif(AccCol_dtype == AccessDataType.TIMESTAMP):
-                    sql_str += f' {col} = \'{val}\','                
-                elif(AccCol_dtype == AccessDataType.YESNO or
-                     AccCol_dtype == AccessDataType.BIT):
-                    if(val):
-                        sql_str += f' {col} = 1,'
+            return[]         
+        # Datagraem列が長い場合分割する
+        Sql_data_list:List[pd.DataFrame] = []        
+        split_iter = (sql_Data.shape[1]+max_colmun_length-1)//max_colmun_length
+        for i in range(split_iter):
+            str_idx = max_colmun_length*i
+            end_idx = max_colmun_length*(i+1)
+            Sql_data_list.append(sql_Data.iloc[:,str_idx:end_idx])
+        # Spl command 作成    
+        for s_sql_data in Sql_data_list: #列分割でのIter、中身はDataFrameで回す
+            for row in s_sql_data.iterrows(): #DataFrame行毎Iter
+                sql_str = f'UPDATE [{self.TableName}] SET'
+                idx = row[0]
+                content_ser = row[1]
+                for col,val in content_ser.items(): #DataFrame列毎Iter                
+                    AccCol_dtype = self.Column_DF[col_name_ser == col][self.col_inf_columns[5]].values[0]
+                    if(AccCol_dtype == AccessDataType.CHAR or
+                    AccCol_dtype == AccessDataType.VARCHAR or
+                    AccCol_dtype == AccessDataType.MEMO or
+                    AccCol_dtype == AccessDataType.GUID):                        
+                        sql_str += f' {col} = \'{val}\','
+                    elif(AccCol_dtype == AccessDataType.BYTE or
+                        AccCol_dtype == AccessDataType.INTEGER or
+                        AccCol_dtype == AccessDataType.LONG or
+                        AccCol_dtype == AccessDataType.AUTOINCREMENT):
+                        sql_str += f' {col} = {val},'
+                    elif(AccCol_dtype == AccessDataType.SINGLE or 
+                        AccCol_dtype == AccessDataType.DOUBLE or
+                        AccCol_dtype == AccessDataType.REAL):
+                        sql_str += f' {col} = {val},'
+                    elif(AccCol_dtype == AccessDataType.CURRENCY):
+                        sql_str += f' {col} = {val},'
+                    elif(AccCol_dtype == AccessDataType.DATE):
+                        datetime_py:date = val
+                        sql_str += f' {col} = \'{datetime_py.strftime("%Y/%m/%d")}\','
+                    elif(AccCol_dtype == AccessDataType.TIME):                    
+                        datetime_py:time = val
+                        sql_str += f' {col} = \'{datetime_py.strftime("%H:%M:%S")}\','
+                    elif(AccCol_dtype == AccessDataType.DATETIME):                    
+                        datetime_py:datetime = val
+                        sql_str += f' {col} = \'{datetime_py.strftime("%Y/%m/%d %H:%M:%S")}\','
+                    elif(AccCol_dtype == AccessDataType.TIMESTAMP):
+                        sql_str += f' {col} = \'{val}\','                
+                    elif(AccCol_dtype == AccessDataType.YESNO or
+                        AccCol_dtype == AccessDataType.BIT):
+                        if(val):
+                            sql_str += f' {col} = 1,'
+                        else:
+                            sql_str += f' {col} = 0,'
+                    elif(AccCol_dtype == AccessDataType.OLEOBJECT):
+                        sql_str += f' {col} = {val},'
+                    elif(AccCol_dtype == AccessDataType.VARBINARY):
+                        datetime_py:time = val
+                        sql_str += f' {col} = \'{datetime_py.strftime("%H:%M:%S.%f")}\','                                                  
                     else:
-                        sql_str += f' {col} = 0,'
-                elif(AccCol_dtype == AccessDataType.OLEOBJECT):
-                    sql_str += f' {col} = {val},'
-                elif(AccCol_dtype == AccessDataType.VARBINARY):
-                    datetime_py:time = val
-                    sql_str += f' {col} = \'{datetime_py.strftime("%H:%M:%S.%f")}\','                                                  
-                else:
-                    self.err = Error.UNDEFINED_DATA_TYPE
-                    return [""]
-            if(type(idx) == int):
-                sql_str = sql_str[0:-1] + f' WHERE {sql_Data.index.name} = {idx};'
-            elif(type(idx) == str):
-                sql_str = sql_str[0:-1] + f' WHERE {sql_Data.index.name} = \'{idx}\';'
-            
-            out_str_list.append(sql_str)
+                        self.err = Error.UNDEFINED_DATA_TYPE
+                        return [""]
+                if(type(idx) == int):
+                    sql_str = sql_str[0:-1] + f' WHERE {sql_Data.index.name} = {idx};'
+                elif(type(idx) == str):
+                    sql_str = sql_str[0:-1] + f' WHERE {sql_Data.index.name} = \'{idx}\';'
+                
+                out_str_list.append(sql_str)
         return out_str_list
             
     def __InsertSQL(self, Data:pd.DataFrame) -> List[str]:
