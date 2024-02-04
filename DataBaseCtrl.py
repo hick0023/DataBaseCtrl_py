@@ -111,6 +111,8 @@ class AccessDataType(Enum):
     """SINGLE"""
     VARBINARY = 21
     """拡張Datetime"""
+    BIT = 22
+    """ブール型 (Yes/No)"""
     
 Access_dtype_py:Dict[AccessDataType,Optional[type]] = {
     AccessDataType.CHAR:str,
@@ -133,7 +135,8 @@ Access_dtype_py:Dict[AccessDataType,Optional[type]] = {
     AccessDataType.HYPERLINK:None,
     AccessDataType.GUID:str,
     AccessDataType.REAL:float,
-    AccessDataType.VARBINARY:bytearray
+    AccessDataType.VARBINARY:bytearray,
+    AccessDataType.BIT:bool
 }
 """Access data type dict to python data type """
 
@@ -469,9 +472,10 @@ class DataBaseCtrl():
                     update_df = df.T[df.T!=chk_df.T].T.dropna(axis=1).dropna(how="all") #変更するべきデータのみを抽出
                     if not(update_df.empty):                  
                         sql = self.__UpdateSQL(update_df)
-                        self.cursor.execute(sql[0])
-                        self.conn.commit()
-                        ret_bool = True           
+                        if len(sql[0]) > 0:
+                            self.cursor.execute(sql[0])
+                            self.conn.commit()
+                            ret_bool = True           
         return ret_bool
             
     def AddRow(self, AddDict:Dict[str,Any],ID:Union[int,str]=None) -> bool:
@@ -867,7 +871,9 @@ class DataBaseCtrl():
         sql_Data = sql_Data.dropna(axis=1)
         if(sql_Data.empty):
             self.err = Error.INVALID_INPUT
-            return []              
+            return [] 
+        if sql_Data.shape[0] < 1 or sql_Data.shape[1] < 1:
+            return[]                     
         for row in sql_Data.iterrows():
             sql_str = f'UPDATE [{self.TableName}] SET'
             idx = row[0]
@@ -901,11 +907,12 @@ class DataBaseCtrl():
                     sql_str += f' {col} = \'{datetime_py.strftime("%Y/%m/%d %H:%M:%S")}\','
                 elif(AccCol_dtype == AccessDataType.TIMESTAMP):
                     sql_str += f' {col} = \'{val}\','                
-                elif(AccCol_dtype == AccessDataType.YESNO):
+                elif(AccCol_dtype == AccessDataType.YESNO or
+                     AccCol_dtype == AccessDataType.BIT):
                     if(val):
-                        sql_str += f' {col[0]} = 1,'
+                        sql_str += f' {col} = 1,'
                     else:
-                        sql_str += f' {col[0]} = 0,'
+                        sql_str += f' {col} = 0,'
                 elif(AccCol_dtype == AccessDataType.OLEOBJECT):
                     sql_str += f' {col} = {val},'
                 elif(AccCol_dtype == AccessDataType.VARBINARY):
@@ -936,7 +943,7 @@ class DataBaseCtrl():
         col_dtype_tag = self.col_inf_columns[5]
         sql_Data = Data.replace([None],float("nan")).replace(["None"],float("nan"))
         sql_Data = sql_Data.dropna(axis=1)      
-        if(sql_Data.empty):
+        if(sql_Data.shape[0] < 1):
             self.err = Error.INVALID_INPUT
             return []
         for row in sql_Data.iterrows():
@@ -958,7 +965,8 @@ class DataBaseCtrl():
                    AccCol_dtype == AccessDataType.MEMO or
                    AccCol_dtype == AccessDataType.GUID):
                     sql_col += f'{col}, '
-                    sql_val += f'\'{val}\', '
+                    val_str:str = val
+                    sql_val += f'\'{val_str.translate(str.maketrans({"'":"`"}))}\', '
                 elif(AccCol_dtype == AccessDataType.BYTE or
                      AccCol_dtype == AccessDataType.INTEGER or
                      AccCol_dtype == AccessDataType.LONG or
@@ -988,7 +996,7 @@ class DataBaseCtrl():
                 elif(AccCol_dtype == AccessDataType.TIMESTAMP):
                     sql_col += f'{col}, '
                     sql_val += f'\'{val}\', ' 
-                elif(AccCol_dtype == AccessDataType.YESNO):                    
+                elif(AccCol_dtype == AccessDataType.YESNO or AccCol_dtype == AccessDataType.BIT):                    
                     if(val):
                         sql_col += f'{col}, '
                         sql_val += '1, '
@@ -1004,8 +1012,12 @@ class DataBaseCtrl():
                   
                 else:
                     self.err = Error.UNDEFINED_DATA_TYPE
-            sql_col = sql_col[0:-2] + ')'
-            sql_val = sql_val[0:-2] + ')'
+            if sql_Data.shape[1] < 1:
+                sql_col = sql_col[0:-1] + ')'
+                sql_val = sql_val[0:-1] + ')'
+            else:
+                sql_col = sql_col[0:-2] + ')'
+                sql_val = sql_val[0:-2] + ')' 
             sql_str = f'{sql_str} {sql_col} {sql_val};'
             out_str_list.append(sql_str)
         return out_str_list
@@ -1067,6 +1079,7 @@ class DataBaseCtrl():
             for access_dtype in AccessDataType:
                 if self.Column_DF.loc[row[0],self.col_inf_columns[5]] == access_dtype.name:
                     self.Column_DF.loc[row[0],self.col_inf_columns[5]] = access_dtype
+                    break
         
     def IsTableExist(self) -> bool:
         """データテーブルが存在するかどうか確認する。
