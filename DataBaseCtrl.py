@@ -979,60 +979,60 @@ class DataBaseCtrl():
                 elif type(idx) == str:
                     sql_col += f"{sql_Data.index.name},"
                     sql_val += f"\'{idx}\',"                            
-                for col,val in content_ser.items(): # DataFrame列でのIter                
-                    AccCol_dtype = self.Column_DF[col_name_ser == col][col_dtype_tag].values[0]
-                    if(AccCol_dtype == AccessDataType.CHAR or
-                    AccCol_dtype == AccessDataType.VARCHAR or
-                    AccCol_dtype == AccessDataType.MEMO or
-                    AccCol_dtype == AccessDataType.GUID):
-                        sql_col += f'{col}, '
-                        val_str:str = val
-                        sql_val += f'\'{val_str.translate(str.maketrans({"'":"`"}))}\', '
-                    elif(AccCol_dtype == AccessDataType.BYTE or
-                        AccCol_dtype == AccessDataType.INTEGER or
-                        AccCol_dtype == AccessDataType.LONG or
-                        AccCol_dtype == AccessDataType.AUTOINCREMENT):
-                        sql_col += f'{col}, '
-                        sql_val += f'{val}, '                    
-                    elif(AccCol_dtype == AccessDataType.SINGLE or 
-                        AccCol_dtype == AccessDataType.DOUBLE or
-                        AccCol_dtype == AccessDataType.REAL):
-                        sql_col += f'{col}, '
-                        sql_val += f'{val}, '                    
-                    elif(AccCol_dtype == AccessDataType.CURRENCY):
-                        sql_col += f'{col}, '
-                        sql_val += f'{val}, '
-                    elif(AccCol_dtype == AccessDataType.DATE):
-                        datetime_py:date = val
-                        sql_col += f'{col}, '
-                        sql_val += f' \'{datetime_py.strftime("%Y/%m/%d")}\', '
-                    elif(AccCol_dtype == AccessDataType.TIME):                    
-                        datetime_py:time = val
-                        sql_col += f'{col}, '
-                        sql_val += f'\'{datetime_py.strftime("%H:%M:%S")}\', '
-                    elif(AccCol_dtype == AccessDataType.DATETIME):                    
-                        datetime_py:datetime = val
-                        sql_col += f'{col}, '
-                        sql_val += f'\'{datetime_py.strftime("%Y/%m/%d %H:%M:%S")}\', '
-                    elif(AccCol_dtype == AccessDataType.TIMESTAMP):
-                        sql_col += f'{col}, '
-                        sql_val += f'\'{val}\', ' 
-                    elif(AccCol_dtype == AccessDataType.YESNO or AccCol_dtype == AccessDataType.BIT):                    
-                        if(val):
+                for col,val in content_ser.items(): # DataFrame列でのIter
+                    if not(self.Column_DF[col_name_ser == col][col_dtype_tag].empty):                                     
+                        AccCol_dtype = self.Column_DF[col_name_ser == col][col_dtype_tag].values[0]
+                        if(AccCol_dtype == AccessDataType.CHAR or
+                        AccCol_dtype == AccessDataType.VARCHAR or
+                        AccCol_dtype == AccessDataType.MEMO or
+                        AccCol_dtype == AccessDataType.GUID):
                             sql_col += f'{col}, '
-                            sql_val += '1, '
-                        elif(not(val)):
+                            val_str:str = val
+                            sql_val += f'\'{val_str.translate(str.maketrans({"'":"`"}))}\', '
+                        elif(AccCol_dtype == AccessDataType.BYTE or
+                            AccCol_dtype == AccessDataType.INTEGER or
+                            AccCol_dtype == AccessDataType.LONG or
+                            AccCol_dtype == AccessDataType.AUTOINCREMENT):
                             sql_col += f'{col}, '
-                            sql_val += '0, '
-                    elif(AccCol_dtype == AccessDataType.OLEOBJECT):
-                        sql_col += f'{col}, '
-                        sql_val += f'{val}, '
-                    elif(AccCol_dtype == AccessDataType.VARBINARY):
-                        sql_col += f'{col}, '
-                        sql_val += f'\'{datetime_py.strftime("%H:%M:%S.%f")}\', '
-                    
-                    else:
-                        self.err = Error.UNDEFINED_DATA_TYPE
+                            sql_val += f'{val}, '                    
+                        elif(AccCol_dtype == AccessDataType.SINGLE or 
+                            AccCol_dtype == AccessDataType.DOUBLE or
+                            AccCol_dtype == AccessDataType.REAL):
+                            sql_col += f'{col}, '
+                            sql_val += f'{val}, '                    
+                        elif(AccCol_dtype == AccessDataType.CURRENCY):
+                            sql_col += f'{col}, '
+                            sql_val += f'{val}, '
+                        elif(AccCol_dtype == AccessDataType.DATE):
+                            datetime_py:date = val
+                            sql_col += f'{col}, '
+                            sql_val += f' \'{datetime_py.strftime("%Y/%m/%d")}\', '
+                        elif(AccCol_dtype == AccessDataType.TIME):                    
+                            datetime_py:time = val
+                            sql_col += f'{col}, '
+                            sql_val += f'\'{datetime_py.strftime("%H:%M:%S")}\', '
+                        elif(AccCol_dtype == AccessDataType.DATETIME):                    
+                            datetime_py:datetime = val
+                            sql_col += f'{col}, '
+                            sql_val += f'\'{datetime_py.strftime("%Y/%m/%d %H:%M:%S")}\', '
+                        elif(AccCol_dtype == AccessDataType.TIMESTAMP):
+                            sql_col += f'{col}, '
+                            sql_val += f'\'{val}\', ' 
+                        elif(AccCol_dtype == AccessDataType.YESNO or AccCol_dtype == AccessDataType.BIT):                    
+                            if(val):
+                                sql_col += f'{col}, '
+                                sql_val += '1, '
+                            elif(not(val)):
+                                sql_col += f'{col}, '
+                                sql_val += '0, '
+                        elif(AccCol_dtype == AccessDataType.OLEOBJECT):
+                            sql_col += f'{col}, '
+                            sql_val += f'{val}, '
+                        elif(AccCol_dtype == AccessDataType.VARBINARY):
+                            sql_col += f'{col}, '
+                            sql_val += f'\'{datetime_py.strftime("%H:%M:%S.%f")}\', '                        
+                        else:
+                            self.err = Error.UNDEFINED_DATA_TYPE
                 if sql_Data.shape[1] < 1:
                     sql_col = sql_col[0:-1] + ')'
                     sql_val = sql_val[0:-1] + ')'
