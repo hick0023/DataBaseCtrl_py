@@ -183,7 +183,13 @@ class DataBaseCtrl():
         'ordinal_position',
         'is_nullable',
         'ordinal']
-    """Coulumns of Column DataFarme""" 
+    """Coulumns of Column DataFarme"""
+    busy:bool
+    """データベース使用中
+    
+    Remarks:
+        マルチスレッド／マルチプロセスでの競合防止
+    """ 
     
     def __init__(self, DataBase_Path:str, TableName:str, DirectMode:bool=False) -> None:
         """データベース(.accdb)制御クラス(コンストラクター)
@@ -193,6 +199,9 @@ class DataBaseCtrl():
             TableName (str): テーブル名
             DirectMode (bool, optional): 直接データベースアクセスモード=True. Defaults to False.
         """
+        #データベースbusy初期化
+        self.busy = False
+        
         self.TableName = TableName
         self.DirectMode = DirectMode
         #拡張子の判定
@@ -215,6 +224,7 @@ class DataBaseCtrl():
         if(self.IsTableExist()):
             self.__GetColumnNameFromDataBase()
         self.err = Error.NO_ERR
+        
         
     def __del__(self) -> None:
         """デストラクタ"""
@@ -239,8 +249,11 @@ class DataBaseCtrl():
             return False
         #SQLでデータベースの読み取り
         sql = self.__SelectSQL()        
+        self.__wait_busy()
+        self.busy=True
         self.cursor.execute(sql)
         res = self.cursor.fetchall()
+        self.busy=False
         if(len(res)<1):
             self.err = Error.NO_DATA_IN_TABLE
             return False        
@@ -290,8 +303,11 @@ class DataBaseCtrl():
                 sql = self.__SelectSQL()
             else:
                 sql = self.__SelectSQL({"ID":ID})
+            self.__wait_busy()
+            self.busy=True
             self.cursor.execute(sql)
             res = self.cursor.fetchall()
+            self.busy=False
             out_df = self.__SqlResultToDataFrame(res)
             out_df = out_df.replace([None],[float("nan")]).replace(["None"],[float("nan")])
         else: #クラス内データフレームモード            
@@ -324,8 +340,11 @@ class DataBaseCtrl():
         out_df = pd.DataFrame()
         if(self.DirectMode and type(Ext_DF) == type(None)): #直接アクセスモード
             sql = self.__SelectSQL(SerchDict, Serch_condition)
+            self.__wait_busy()
+            self.busy=True
             self.cursor.execute(sql)
             res = self.cursor.fetchall()
+            self.busy=False
             out_df = self.__SqlResultToDataFrame(res)
         else: #クラス内データフレームモード       
             #検索するデータフレーム       
@@ -412,8 +431,11 @@ class DataBaseCtrl():
                     return False
                 selected_df.at[ID,key] = UpdateDict[key]
             sql = self.__UpdateSQL(selected_df)
+            self.__wait_busy()
+            self.busy=True
             self.cursor.execute(sql[0])
             self.conn.commit()
+            self.busy=False
             ret_bool = True                    
             
         else:   #内部データフレームモード
@@ -474,10 +496,13 @@ class DataBaseCtrl():
                     update_df = df.T[df.T!=chk_df.T].T.dropna(axis=1).dropna(how="all") #変更するべきデータのみを抽出
                     if not(update_df.empty):                  
                         sql_list = self.__UpdateSQL(update_df)
+                        self.__wait_busy()
+                        self.busy=True
                         for sql in sql_list:                        
                             self.cursor.execute(sql)                            
                             ret_bool = True
                         self.conn.commit()
+                        self.busy=False
         return ret_bool
             
     def AddRow(self, AddDict:Dict[str,Any],ID:Union[int,str]=None) -> bool:
@@ -517,8 +542,11 @@ class DataBaseCtrl():
                 new_row = pd.DataFrame([AddDict], columns=column_names)
             
             sql = self.__InsertSQL(new_row)
+            self.__wait_busy()
+            self.busy=True
             self.cursor.execute(sql[0])
             self.conn.commit()
+            self.busy=False
             ret_bool = True
         else:   #内部データフレームモード
             #行の追加
@@ -542,13 +570,16 @@ class DataBaseCtrl():
         Returns:
             bool: 成功=True / 失敗=False
         """
-        ret_bool:bool
+        ret_bool:bool = False
         if(self.DirectMode):    #ダイレクトモード            
             sql_list = self.__InsertSQL(df)
+            self.__wait_busy()
+            self.busy=True
             for sql in sql_list:
                 self.cursor.execute(sql)
                 ret_bool = True
-            self.conn.commit()        
+            self.conn.commit()
+            self.busy=False        
         return ret_bool
     
     def DeleteRow(self, ID:Union[int,str], Del:bool=True) -> bool:
@@ -572,8 +603,11 @@ class DataBaseCtrl():
                 self.err = Error.NO_ROW_EXIST
                 return False
             sql = self.__DeleteSQL(del_df)
+            self.__wait_busy()
+            self.busy=True
             self.cursor.execute(sql[0])
             self.conn.commit()
+            self.busy=False
             ret_bool = True
             
         else:   #データフレームモード
@@ -625,9 +659,12 @@ class DataBaseCtrl():
         if(not(delete_df.empty)):
             sql_list.extend(self.__DeleteSQL(delete_df))            
         #SQLの実行
+        self.__wait_busy()
+        self.busy=True
         for sql in sql_list:
             self.cursor.execute(sql)
         self.conn.commit()
+        self.busy=False
         self.UpdateInternalDataFrame()
         return True
 
@@ -703,9 +740,12 @@ class DataBaseCtrl():
         else:
             self.err = Error.INVALID_INPUT
             return False
-                
+        
+        self.__wait_busy()
+        self.busy=True        
         self.cursor.execute(sql)
         self.conn.commit()
+        self.busy=False
         self.__GetColumnNameFromDataBase()
         return True    
     
@@ -719,8 +759,11 @@ class DataBaseCtrl():
             bool: 成功=True / 失敗=False
         """
         sql = f"ALTER TABLE {self.TableName} DROP COLUMN {ColumnName};"
+        self.__wait_busy()
+        self.busy=True
         self.cursor.execute(sql)
         self.conn.commit()
+        self.busy=False
         self.__GetColumnNameFromDataBase()
         return True
     
@@ -746,8 +789,11 @@ class DataBaseCtrl():
             else:
                 sql=""
             if len(sql) > 0:
+                self.__wait_busy()
+                self.busy=True
                 self.cursor.execute(sql)
                 self.conn.commit()
+                self.busy=False
                 self.__GetColumnNameFromDataBase()
                 ret_bool = True
         return ret_bool
@@ -1093,8 +1139,11 @@ class DataBaseCtrl():
     def __GetColumnNameFromDataBase(self):
         """データベースの列情報を取得してクラス内のDataFrameをアップデートする。
         """        
+        self.__wait_busy()
+        self.busy=True
         cols_inf = self.cursor.columns(table=self.TableName)
-        cols_inf_res = cols_inf.fetchall()           
+        cols_inf_res = cols_inf.fetchall()
+        self.busy=False           
         self.Column_DF = pd.DataFrame(np.array(cols_inf_res),columns=self.col_inf_columns)
         for row in self.Column_DF.iterrows():
             for access_dtype in AccessDataType:
@@ -1110,13 +1159,22 @@ class DataBaseCtrl():
         """
         ret_bool:bool
         try:
+            self.__wait_busy()
+            self.busy=True
             self.cursor.columns(table=self.TableName)            
             res = self.cursor.fetchall()
+            self.busy=False
             if len(res) < 1:
                 ret_bool = False
             else:
                 ret_bool = True
         except pyodbc.ProgrammingError:
+            self.busy=False
             ret_bool = False
         return ret_bool
         
+    def __wait_busy(self) -> None:
+        """SQLデータベース使用中は待つ
+        """
+        while self.busy:
+            pass    
