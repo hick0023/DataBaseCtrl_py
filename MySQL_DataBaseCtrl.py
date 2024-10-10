@@ -413,6 +413,8 @@ class DataBaseCtrl():
         sql = f"SELECT COUNT(1) FROM {TableName}"
         if ID == None:
             sql += ";"
+        elif type(ID) == str:
+            sql += f" WHERE ID = '{ID}';"
         else:
             sql += f" WHERE ID = {ID};"
         try:
@@ -563,8 +565,11 @@ class DataBaseCtrl():
                     sql_list.append(sql)
             else:
                 sql = f"INSERT INTO {TableName}"
-                cols_str = "(ID," 
-                vals_str = f"({idx},"
+                cols_str = "(ID,"
+                if type(idx) == str:
+                     vals_str = f"('{idx}',"
+                else:
+                    vals_str = f"({idx},"
                 for col,item in row.items():
                     if pd.isnull(item):
                         for table_info in table_info_list:
