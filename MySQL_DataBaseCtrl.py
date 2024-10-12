@@ -260,6 +260,14 @@ class DataBaseCtrl():
         return result
        
     def IsExistTable(self,TableName:str) -> Tuple[bool,bool]:
+        """テーブルが存在するかどうか確認する。
+
+        Args:
+            TableName (str): テーブル名
+
+        Returns:
+            Tuple[bool,bool]: SQLエラー, テーブル存在(True)
+        """
         sql = "SELECT COUNT(*) FROM information_schema.tables "
         sql += f"WHERE table_schema = '{self.DataBaseName}' "
         sql += f"AND table_name = '{TableName}';"
