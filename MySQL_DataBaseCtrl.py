@@ -5,6 +5,7 @@ from pandas._libs.tslibs import timedeltas,timestamps
 from datetime import datetime,date,timedelta
 from enum import Enum
 from typing import List,Dict,Any,Tuple,Union,Optional
+import numpy as np
 
 wild_card = str.maketrans({'*':'%'})
 """Wilde Card Translate"""
@@ -265,7 +266,7 @@ class DataBaseCtrl():
         Type:DataType,
         LEN_VAL:Optional[Union[str,int]]=None,
         Default_Value:DefaultValue=DefaultValue.NoDafault,
-        Default_Value_User_define:Optional[str]=None,
+        Default_Value_User_define:Optional[Union[str,int]]=None,
         CharacterSet:Optional[str]=None,
         AttributeSet:Attribute=Attribute.NONE,
         Nullable:bool=True,
@@ -282,7 +283,7 @@ class DataBaseCtrl():
             Type (DataType): データタイプ
             LEN_VAL (str | int, optional): 長さ/値（Typeによって要否、フォーマット異なる）. Defaults to None.
             Default_Value (DefaultValue, optional): デフォルト値. Defaults to Default_Value.NoDafault.
-            Default_Value_User_define (str, optional): デフォルト値がユーザー定義の場合の値. Defaults to None.
+            Default_Value_User_define (str | int , optional): デフォルト値がユーザー定義の場合の値. Defaults to None.
             CharacterSet (Optional[str], optional): 【未実装】照合順序. Defaults to None.
             AttributeSet (Attribute, optional): 属性. Defaults to Attribute.NONE.
             Nullable (bool, optional): NULL値を許可. Defaults to True.
@@ -551,18 +552,19 @@ class DataBaseCtrl():
         sql_list:List[str] = []
         table_info_list = self.GetColmunsInfo(TableName)
         for idx,row in Data.iterrows():
-            if self.GetRecordCount(TableName,idx) > 0 and OverWrite:
-                sql = f"UPDATE {TableName}"
-                exist_row = self.GetRowByID(TableName,idx)
-                update_data = ""
-                for col,item in row.items():
-                    if item != exist_row.loc[idx,col]:
-                        item = self.__ConvertToValuStr(item)
-                        update_data += f"{col} = {item},"
-                if len(update_data) > 0:
-                    update_data = update_data[0:-1]
-                    sql += " SET " + update_data + f" WHERE ID = {idx};"
-                    sql_list.append(sql)
+            if self.GetRecordCount(TableName,idx) > 0:
+                if OverWrite:
+                    sql = f"UPDATE {TableName}"
+                    exist_row = self.GetRowByID(TableName,idx)
+                    update_data = ""
+                    for col,item in row.items():
+                        if item != exist_row.loc[idx,col]:
+                            item = self.__ConvertToValuStr(item)
+                            update_data += f"{col} = {item},"
+                    if len(update_data) > 0:
+                        update_data = update_data[0:-1]
+                        sql += " SET " + update_data + f" WHERE ID = {idx};"
+                        sql_list.append(sql)
             else:
                 sql = f"INSERT INTO {TableName}"
                 cols_str = "(ID,"
@@ -573,23 +575,28 @@ class DataBaseCtrl():
                 for col,item in row.items():
                     if pd.isnull(item):
                         for table_info in table_info_list:
-                            if table_info["Field"] == col and table_info["Null"] == "NO":
-                                cols_str += f"{col},"
-                                if (table_info["Type"].count("int") > 0 or
-                                    table_info["Type"].count("float") > 0 or
-                                    table_info["Type"].count("double") > 0) :
-                                    vals_str += f"0,"
-                                elif table_info["Type"] == "date":
-                                   vals_str += f"'0000-00-00',"
-                                elif (table_info["Type"] == "datetime" or
-                                      table_info["Type"] == "timestamp"):
-                                    vals_str += f"'0000-00-00 00:00:00',"
-                                elif table_info["Type"] == "time":
-                                    vals_str += f"'00:00:00',"
-                                elif table_info["Type"].count("year") > 0:
-                                    vals_str += f"0000,"
+                            if table_info["Field"] == col:
+                                if table_info["Null"] == "NO":
+                                    cols_str += f"{col},"
+                                    if (table_info["Type"].count("int") > 0 or
+                                        table_info["Type"].count("float") > 0 or
+                                        table_info["Type"].count("double") > 0) :
+                                        vals_str += f"0,"
+                                    elif table_info["Type"] == "date":
+                                        vals_str += f"'0000-00-00',"
+                                    elif (table_info["Type"] == "datetime" or
+                                        table_info["Type"] == "timestamp"):
+                                        vals_str += f"'0000-00-00 00:00:00',"
+                                    elif table_info["Type"] == "time":
+                                        vals_str += f"'00:00:00',"
+                                    elif table_info["Type"].count("year") > 0:
+                                        vals_str += f"0000,"
+                                    else:
+                                        vals_str += f"'',"
                                 else:
-                                    vals_str += f"'',"                                 
+                                    pass
+                    elif item == "":
+                        pass
                     else:
                         item = self.__ConvertToValuStr(item)
                         cols_str += f"{col},"
@@ -664,7 +671,7 @@ class DataBaseCtrl():
         Type:DataType,
         LEN_VAL:Optional[Union[str,int]]=None,
         Default_Value:DefaultValue=DefaultValue.NoDafault,
-        Default_Value_User_define:Optional[str]=None,        
+        Default_Value_User_define:Optional[Union[str,int]]=None,        
         CharacterSet:Optional[str]=None,
         AttributeSet:Attribute=Attribute.NONE,
         Nullable:bool=True,
@@ -680,7 +687,7 @@ class DataBaseCtrl():
             Type (DataType): データタイプ
             LEN_VAL (Optional[Union[str,int]], optional): 長さ/値（Typeによって要否、フォーマット異なる）. Defaults to None.
             Default_Value (DefaultValue, optional): デフォルト値. Defaults to DefaultValue.NoDafault.
-            Default_Value_User_define (Optional[str], optional): デフォルト値がユーザー定義の場合の値. Defaults to None.
+            Default_Value_User_define (Optional[str | int], optional): デフォルト値がユーザー定義の場合の値. Defaults to None.
             CharacterSet (Optional[str], optional): 【未実装】照合順序. Defaults to None.
             AttributeSet (Attribute, optional): 属性. Defaults to Attribute.NONE.
             Nullable (bool, optional): NULL値を許可. Defaults to True.
@@ -731,15 +738,21 @@ class DataBaseCtrl():
         elif Type == DataType.DATE:
             sql += "DATE"            
         elif Type == DataType.DATETIME:
-            sql += "DATETIME"            
+            sql += "DATETIME"
+            if LEN_VAL != None:
+                sql += f"({str(LEN_VAL)})"            
         elif Type == DataType.TIMESTAMP:
-            sql += "TIMESTAMP"            
+            sql += "TIMESTAMP"
+            if LEN_VAL != None:
+                sql += f"({str(LEN_VAL)})"            
         elif Type == DataType.TIME:
-            sql += "TIME"            
+            sql += "TIME"
+            if LEN_VAL != None:
+                sql += f"({str(LEN_VAL)})"
         elif Type == DataType.YEAR:
             sql += "YEAR"
         elif Type == DataType.CHAR and LEN_VAL != None:
-            if type(LEN_VAL) == int:
+            if type(LEN_VAL) in [int,np.int8,np.int16,np.int32,np.int64]:
                 sql += f"CHAR({str(LEN_VAL)})"
             else:
                 result = False
@@ -836,7 +849,10 @@ class DataBaseCtrl():
             pass
         elif Default_Value == DefaultValue.UserDefined:
             if Default_Value_User_define != None:
-                sql += f"DEFAULT \'{str(Default_Value_User_define)}\' "
+                if type(Default_Value_User_define) == str:
+                    sql += f"DEFAULT \'{str(Default_Value_User_define)}\' "
+                elif type(Default_Value_User_define) == int:
+                    sql += f"DEFAULT {str(Default_Value_User_define)} "
             else:
                 result = False
         elif Default_Value == DefaultValue.NULL:
