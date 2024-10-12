@@ -259,6 +259,22 @@ class DataBaseCtrl():
             result = False
         return result
        
+    def IsExistTable(self,TableName:str) -> Tuple[bool,bool]:
+        sql = "SELECT COUNT(*) FROM information_schema.tables "
+        sql += f"WHERE table_schema = '{self.DataBaseName}' "
+        sql += f"AND table_name = '{TableName}';"
+        try:
+            res = self.cursor.execute(sql)
+            res = self.cursor.fetchall()
+            self.err = None
+            out_val = res[0]["COUNT(*)"] == 1
+            err_bool = True
+        except pymysql.Error as err:
+            self.err = err
+            out_val = False
+            err_bool = False
+        return err_bool,out_val
+       
     def AddColumn(
         self,
         TableName:str,
