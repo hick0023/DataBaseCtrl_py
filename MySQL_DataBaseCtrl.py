@@ -968,7 +968,7 @@ def AddRowToDataFrame(df:DataFrame,RowData:Dict[str,Any]) -> DataFrame:
         tmp_df1.index.name = "ID"
         tmp_df2 = tmp_df1.copy()
         for col in tmp_df1.columns.to_list():
-            tmp_df2[col] = tmp_df1[col].astype(df[col].dtype)
+            tmp_df2[col] = tmp_df1[col].astype(str).astype(df[col].dtype)
         out_df = pd.concat([df,tmp_df2],axis=0)
     else:
         out_df = df
