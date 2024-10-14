@@ -582,12 +582,17 @@ class DataBaseCtrl():
                     exist_row = self.GetRowByID(TableName,idx)
                     update_data = ""
                     for col,item in row.items():
-                        if item != exist_row.loc[idx,col]:
-                            item = self.__ConvertToValuStr(item)
-                            update_data += f"{col} = {item},"
+                        if pd.notna(item) and item != "":
+                            if item != exist_row.loc[idx,col]:
+                                item = self.__ConvertToValuStr(item)
+                                update_data += f"{col} = {item},"
                     if len(update_data) > 0:
                         update_data = update_data[0:-1]
-                        sql += " SET " + update_data + f" WHERE ID = {idx};"
+                        if type(idx) in [int,float]:
+                            sql += " SET " + update_data + f" WHERE ID = {idx};"
+                        else:
+                            sql += " SET " + update_data + f" WHERE ID = '{idx}';"
+                            
                         sql_list.append(sql)
             else:
                 sql = f"INSERT INTO {TableName}"
@@ -966,6 +971,7 @@ def AddRowToDataFrame(df:DataFrame,RowData:Dict[str,Any]) -> DataFrame:
     if df_idx != None and len(correct_dict) > 0:
         tmp_df1 = DataFrame(correct_dict,index=[df_idx])
         tmp_df1.index.name = "ID"
+        tmp_df1.dropna(axis=1,inplace=True)
         tmp_df2 = tmp_df1.copy()
         for col in tmp_df1.columns.to_list():
             tmp_df2[col] = tmp_df1[col].astype(str).astype(df[col].dtype)
