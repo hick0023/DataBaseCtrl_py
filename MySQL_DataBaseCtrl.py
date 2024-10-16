@@ -466,7 +466,10 @@ class DataBaseCtrl():
         if ID == None:
             pass
         else:
-            sql += f" WHERE ID = {ID}"
+            if type(ID) in [int,float]:
+                sql += f" WHERE ID = {ID}"
+            else:
+                sql += f" WHERE ID = '{ID}'"
         sql += ";"
         try:
             self.cursor.execute(sql)
