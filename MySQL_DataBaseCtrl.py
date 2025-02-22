@@ -174,10 +174,7 @@ class DataBaseCtrl():
             self.err = err
         
     def __del__(self) -> None:
-        if (self.cursor.connection != None):
-            self.cursor.close()
-        if (self.connection.open):
-            self.connection.close()         
+        pass        
 
     def AddTable(
         self,
