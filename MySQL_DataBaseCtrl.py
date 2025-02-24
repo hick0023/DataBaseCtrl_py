@@ -627,6 +627,7 @@ class DataBaseCtrl():
                     elif item == "":
                         pass
                     else:
+                        item = repr(item)[1:-1]
                         item = self.__ConvertToValuStr(item)
                         cols_str += f"{col},"
                         vals_str += f"{item},"
