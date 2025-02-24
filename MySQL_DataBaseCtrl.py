@@ -584,6 +584,7 @@ class DataBaseCtrl():
                     for col,item in row.items():
                         if pd.notna(item) and item != "":
                             if item != exist_row.loc[idx,col]:
+                                item = repr(item)
                                 item = self.__ConvertToValuStr(item)
                                 update_data += f"{col} = {item},"
                     if len(update_data) > 0:
