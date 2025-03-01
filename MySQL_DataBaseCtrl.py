@@ -148,7 +148,7 @@ class DataBaseCtrl():
     """データベース名"""
     err:Optional[pymysql.Error]
     """SQLエラー内容"""
-    def __init__(self,DataBaseIP:str,DataBaseName:str,UserName:str,PassWord:str,CharSet:str="utf8mb4") -> None:
+    def __init__(self,DataBaseIP:str,DataBaseName:str,UserName:str,PassWord:str,CharSet:str="utf8mb4",max_packet:int=1) -> None:
         """MySQLデータベース制御クラス（コンストラクター）
 
         Args:
@@ -157,7 +157,10 @@ class DataBaseCtrl():
             UserName (str): ユーザー名
             PassWord (str): パスワード
             CharSet (str, optional): 文字セット. Defaults to "utf8mb4".
+            max_packet (int, optional): 最大許容パケットサイズ. Defaults to 1.
         """
+        if type(max_packet) == float:
+            max_packet = int(max_packet)
         try:
             self.connection = pymysql.connect(
                 host = DataBaseIP,
@@ -165,7 +168,8 @@ class DataBaseCtrl():
                 password = PassWord,
                 db = DataBaseName,
                 charset = CharSet,
-                cursorclass=pymysql.cursors.DictCursor
+                cursorclass=pymysql.cursors.DictCursor,
+                max_allowed_packet= (1048576 * max_packet)
             )
             self.DataBaseName = str(self.connection.db).split("'")[1]
             self.cursor = self.connection.cursor()
