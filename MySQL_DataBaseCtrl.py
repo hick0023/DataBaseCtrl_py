@@ -588,7 +588,9 @@ class DataBaseCtrl():
                     for col,item in row.items():
                         if pd.notna(item) and item != "":
                             if item != exist_row.loc[idx,col]:
-                                item = repr(item)[1:-1]
+                                table_info = list(filter(lambda x: x["Field"] == col ,table_info_list))[0]
+                                if table_info["Type"].count("text") > 0:
+                                    item = repr(item)[1:-1]
                                 item = self.__ConvertToValuStr(item)
                                 update_data += f"{col} = {item},"
                     if len(update_data) > 0:
@@ -632,7 +634,9 @@ class DataBaseCtrl():
                     elif item == "":
                         pass
                     else:
-                        item = repr(item)[1:-1]
+                        table_info = list(filter(lambda x: x["Field"] == col ,table_info_list))[0]
+                        if table_info["Type"].count("text") > 0:
+                            item = repr(item)[1:-1]
                         item = self.__ConvertToValuStr(item)
                         cols_str += f"{col},"
                         vals_str += f"{item},"
