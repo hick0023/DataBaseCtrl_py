@@ -491,6 +491,22 @@ class DataBaseCtrl():
         else:
             df = None
         return df
+    
+    def GetIDsBySearch(self,TableName:str,search_str:str) -> List[str]:
+        """検索文字列でIDリストを取得する。
+
+        Args:
+            TableName (str): テーブル名
+            search_str (str): 検索文字列、SQLに従う。例\`{列名}\` IS NOT NULL
+
+        Returns:
+            List[str]: 検索文字列に一致するIDリスト
+        """
+        sql = f"SELECT ID FROM `{TableName}` WHERE {search_str}"
+        self.cursor.execute(sql)
+        res = self.cursor.fetchall()
+        id_list = [x["ID"] for x in res]
+        return id_list
         
     def GetDataFrameFormat(self,TableName:str) -> DataFrame:
         """_summary_
