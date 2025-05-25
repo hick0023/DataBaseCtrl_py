@@ -6,6 +6,7 @@ from datetime import datetime,date,timedelta
 from enum import Enum
 from typing import List,Dict,Any,Tuple,Union,Optional
 import numpy as np
+from time import sleep
 
 wild_card = str.maketrans({'*':'%'})
 """Wilde Card Translate"""
@@ -497,7 +498,7 @@ class DataBaseCtrl():
 
         Args:
             TableName (str): テーブル名
-            search_str (str): 検索文字列、SQLに従う。例\`{列名}\` IS NOT NULL
+            search_str (str): 検索文字列、SQLに従う。例\\`{列名}\\` IS NOT NULL
 
         Returns:
             List[str]: 検索文字列に一致するIDリスト
@@ -664,12 +665,17 @@ class DataBaseCtrl():
         update_count = 0
         err_list = []        
         for wsql in sql_list:
-            try:
-                self.cursor.execute(wsql)
-                self.cursor.fetchall()
-                update_count += 1
-            except pymysql.Error as err:
-                err_list.append(err)
+            for attempt in range(5): #最大５回までリトライ
+                try:
+                    self.cursor.execute(wsql)
+                    self.cursor.fetchall()
+                    update_count += 1
+                    break
+                except pymysql.IntegrityError as err:
+                    sleep(0.5) #Primary Keyが重複した場合0.5秒おいてリトライ、リトライ上限過ぎてもエラーにはしない。
+                except pymysql.Error as err:
+                    err_list.append(err)
+                    break
         if update_count > 0:
             try:
                 self.connection.commit()
