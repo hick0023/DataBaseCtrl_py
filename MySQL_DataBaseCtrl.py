@@ -149,7 +149,7 @@ class DataBaseCtrl():
     """データベース名"""
     err:Optional[pymysql.Error]
     """SQLエラー内容"""
-    def __init__(self,DataBaseIP:str,DataBaseName:str,UserName:str,PassWord:str,CharSet:str="utf8mb4",max_packet:int=1) -> None:
+    def __init__(self,DataBaseIP:str,DataBaseName:str,UserName:str,PassWord:str,CharSet:str="utf8mb4",max_packet:int=1,max_txt_length:int=500000) -> None:
         """MySQLデータベース制御クラス（コンストラクター）
 
         Args:
@@ -159,7 +159,9 @@ class DataBaseCtrl():
             PassWord (str): パスワード
             CharSet (str, optional): 文字セット. Defaults to "utf8mb4".
             max_packet (int, optional): 最大許容パケットサイズ. Defaults to 1.
+            max_txt_length (int, optional): 最大トータルTextデータ長. Defaults to 500000.
         """
+        self.max_txt_len = max_txt_length
         if type(max_packet) == float:
             max_packet = int(max_packet)
         try:
@@ -594,74 +596,80 @@ class DataBaseCtrl():
         Returns:
             Tuple[int,List[pymysql.Error]]: 挿入または更新された行数, エラーリスト
         """
+        str_len_df = self.__CheckTextLength(Data)
         sql_list:List[str] = []
         table_info_list = self.GetColmunsInfo(TableName)
-        for idx,row in Data.iterrows():
-            if self.GetRecordCount(TableName,idx) > 0:
-                if OverWrite:
-                    sql = f"UPDATE {TableName}"
-                    exist_row = self.GetRowByID(TableName,idx)
-                    update_data = ""
-                    for col,item in row.items():
-                        if pd.notna(item) and item != "":
-                            if item != exist_row.loc[idx,col]:
-                                table_info = list(filter(lambda x: x["Field"] == col ,table_info_list))[0]
-                                if table_info["Type"].count("text") > 0:
-                                    item = repr(item)[1:-1]
-                                item = self.__ConvertToValuStr(item)
-                                update_data += f"{col} = {item},"
-                    if len(update_data) > 0:
+        for idx,row in Data.iterrows():            
+            c_row = self.__CleanRow(row,TableName)  # Clean -- 値がNAと""の列は削除 
+            # 分割
+            dev_col_list:List[List[str]] = []
+            tmp_col_list:List[str] = []
+            sum_cnt = 0
+            cnt:Series = str_len_df.loc[idx][c_row.index]
+            cnt = cnt.sort_values(ascending=False)
+            c_row = c_row.loc[cnt.index]
+            for col,item in cnt.items():
+                sum_cnt += item
+                tmp_col_list.append(col)
+                if sum_cnt > self.max_txt_len:
+                    dev_col_list.append(tmp_col_list)
+                    tmp_col_list = []
+                    sum_cnt = 0
+            dev_col_list.append(tmp_col_list)
+            dev_col_list = list(filter(lambda x: len(x) > 0,dev_col_list))
+            if self.GetRecordCount(TableName,idx) > 0:  #レコードがある場合
+                if OverWrite: #上書きする場合のみ
+                    for col_list in dev_col_list:
+                        sql = f"UPDATE {TableName}"
+                        update_data = ""
+                        for col in col_list:
+                            table_info = list(filter(lambda x: x["Field"] == col ,table_info_list))[0]
+                            if table_info["Type"].count("text") > 0:
+                                value = repr(c_row.loc[col])[1:-1]
+                            else:
+                                value = c_row.loc[col]
+                            value = self.__ConvertToValuStr(value)
+                            update_data += f"{col} = {value},"
                         update_data = update_data[0:-1]
                         if type(idx) in [int,float]:
-                            sql += " SET " + update_data + f" WHERE ID = {idx};"
+                            sql += f" SET {update_data} WHERE ID = {idx};"
                         else:
-                            sql += " SET " + update_data + f" WHERE ID = '{idx}';"
-                            
+                            sql += f" SET {update_data} WHERE ID = '{idx}';"
                         sql_list.append(sql)
-            else:
-                sql = f"INSERT INTO {TableName}"
-                cols_str = "(ID,"
-                if type(idx) == str:
-                     vals_str = f"('{idx}',"
-                else:
-                    vals_str = f"({idx},"
-                for col,item in row.items():
-                    if pd.isnull(item):
-                        for table_info in table_info_list:
-                            if table_info["Field"] == col:
-                                if table_info["Null"] == "NO":
-                                    cols_str += f"{col},"
-                                    if (table_info["Type"].count("int") > 0 or
-                                        table_info["Type"].count("float") > 0 or
-                                        table_info["Type"].count("double") > 0) :
-                                        vals_str += f"0,"
-                                    elif table_info["Type"] == "date":
-                                        vals_str += f"'0000-00-00',"
-                                    elif (table_info["Type"] == "datetime" or
-                                        table_info["Type"] == "timestamp"):
-                                        vals_str += f"'0000-00-00 00:00:00',"
-                                    elif table_info["Type"] == "time":
-                                        vals_str += f"'00:00:00',"
-                                    elif table_info["Type"].count("year") > 0:
-                                        vals_str += f"0000,"
-                                    else:
-                                        vals_str += f"'',"
-                                else:
-                                    pass
-                    elif item == "":
-                        pass
+            else: #レコードが無い場合
+                for i,col_list in enumerate(dev_col_list):
+                    ins_sql = f"INSERT INTO {TableName}"
+                    ins_cols_str = "(ID,"
+                    upd_sql = f"UPDATE {TableName}"
+                    upd_data = ""
+                    if type(idx) == str:
+                        ins_vals_str = f"('{idx}',"
                     else:
+                        ins_vals_str = f"({idx},"
+                    for col in col_list:
                         table_info = list(filter(lambda x: x["Field"] == col ,table_info_list))[0]
                         if table_info["Type"].count("text") > 0:
-                            item = repr(item)[1:-1]
-                        item = self.__ConvertToValuStr(item)
-                        cols_str += f"{col},"
-                        vals_str += f"{item},"
-                cols_str = cols_str[0:-1] + ")"
-                vals_str = vals_str[0:-1] + ")"
-                sql += f" {cols_str} VALUES {vals_str};"
-                sql_list.append(sql)
-        
+                            value = repr(c_row.loc[col])[1:-1]
+                        else:
+                            value = c_row.loc[col]
+                        value = self.__ConvertToValuStr(value)
+                        ins_cols_str += f"{col},"
+                        ins_vals_str += f"{value},"
+                        upd_data += f"{col} = {value},"
+                    #INSERTの場合のSQL
+                    ins_cols_str = ins_cols_str[0:-1] + ")"
+                    ins_vals_str = ins_vals_str[0:-1] + ")"
+                    ins_sql += f" {ins_cols_str} VALUES {ins_vals_str};"
+                    #UPDATEの場合のSQL
+                    upd_data = upd_data[0:-1]
+                    if type(idx) in [int,float]:
+                        upd_sql += f" SET {upd_data} WHERE ID = {idx};"
+                    else:
+                        upd_sql += f" SET {upd_data} WHERE ID = '{idx}';"
+                    if i<1: #初回のSQLはINSERT
+                        sql_list.append(ins_sql)
+                    else:   #2回目以降はUPDATE
+                        sql_list.append(upd_sql)
         update_count = 0
         err_list = []        
         for wsql in sql_list:
@@ -982,6 +990,49 @@ class DataBaseCtrl():
         else:
             out_val = f"'{PandasVal}'"
         return out_val
+    
+    def __CheckTextLength(self, Data:DataFrame) -> DataFrame:
+        """データが文字列の場合文字数を取得する
+
+        Args:
+            Data (DataFrame): データ
+
+        Returns:
+            DataFrame: 文字数のDataFrame
+        """
+        out_df = DataFrame() 
+        for idx,ser in Data.iterrows():
+            tmp_dict = {}
+            for col,item in ser.items():
+                if pd.notna(item):
+                    if type(item) == str:
+                        tmp_dict[col] = len(item)
+                    else:
+                        tmp_dict[col] = 0
+                else:
+                    tmp_dict[col] = None
+            out_df = pd.concat([out_df,DataFrame(tmp_dict,index=[idx])],axis=0)
+        return out_df
+    
+    def __CleanRow(self,Data:Series,TableName:str) -> Series:
+        """行データをクリーンする
+
+        Args:
+            Data (Series): 行データ
+            TableName (str): テーブル名
+
+        Returns:
+            Series: クリーン行データ
+        """
+        tmp_ser = Data.dropna()
+        exist_row = self.GetRowByID(TableName,tmp_ser.name)
+        if exist_row is not None:
+            exist_ser:Series = exist_row.loc[tmp_ser.name]
+            exist_ser = exist_ser.loc[tmp_ser.index]
+            out_ser = tmp_ser[tmp_ser != exist_ser]
+        else:
+            out_ser = tmp_ser
+        return out_ser
     
 def AddRowToDataFrame(df:DataFrame,RowData:Dict[str,Any]) -> DataFrame:
     """DataFrameに行を追加する。
