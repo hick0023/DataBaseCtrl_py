@@ -3,6 +3,8 @@ import pandas as pd
 from pandas import DataFrame,Series,Timestamp,Timedelta
 from pandas._libs.tslibs import timedeltas,timestamps
 from datetime import datetime,date,timedelta
+import os
+from multiprocessing import current_process
 from enum import Enum
 from typing import List,Dict,Any,Tuple,Union,Optional
 import numpy as np
@@ -149,7 +151,7 @@ class DataBaseCtrl():
     """データベース名"""
     err:Optional[pymysql.Error]
     """SQLエラー内容"""
-    def __init__(self,DataBaseIP:str,DataBaseName:str,UserName:str,PassWord:str,CharSet:str="utf8mb4",max_packet:int=1,max_txt_length:int=500000) -> None:
+    def __init__(self,DataBaseIP:str,DataBaseName:str,UserName:str,PassWord:str,CharSet:str="utf8mb4",max_packet:int=1,max_txt_length:int=500000,debug_mode:bool=False) -> None:
         """MySQLデータベース制御クラス（コンストラクター）
 
         Args:
@@ -160,8 +162,12 @@ class DataBaseCtrl():
             CharSet (str, optional): 文字セット. Defaults to "utf8mb4".
             max_packet (int, optional): 最大許容パケットサイズ. Defaults to 1.
             max_txt_length (int, optional): 最大トータルTextデータ長. Defaults to 500000.
+            debug_mode (bool, optional): デバッグログを出力するかどうか. Defaults to False.
         """
+        self.debug_mode = bool(debug_mode)
+        self.debug_log_path = os.path.join(os.path.dirname(__file__), "DataBaseCtrl_debug.log")
         self.max_txt_len = max_txt_length
+        self.__WriteDebugLog("init_start", f"host={DataBaseIP}, db={DataBaseName}, user={UserName}")
         if type(max_packet) == float:
             max_packet = int(max_packet)
         try:
@@ -177,11 +183,65 @@ class DataBaseCtrl():
             self.DataBaseName = str(self.connection.db).split("'")[1]
             self.cursor = self.connection.cursor()
             self.err = None
+            self.__WriteDebugLog("init_success", f"connected_db={self.DataBaseName}")
         except pymysql.Error as err:
             self.err = err
+            self.__WriteDebugLog("init_error", repr(err))
         
     def __del__(self) -> None:
-        pass        
+        self.__close_resources()
+
+    def __enter__(self):
+        """with文開始時に自身を返す。"""
+        self.__WriteDebugLog("enter", None)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        """with文終了時に接続リソースを解放する。"""
+        self.__WriteDebugLog("exit", f"exc_type={exc_type}")
+        self.__close_resources()
+        return False
+
+    def __close_resources(self) -> None:
+        """cursor/connectionを安全にクローズする。"""
+        cursor = getattr(self, "cursor", None)
+        if cursor is not None:
+            try:
+                cursor.close()
+                self.__WriteDebugLog("close_cursor", "ok")
+            except Exception:
+                self.__WriteDebugLog("close_cursor", "failed")
+                pass
+            finally:
+                self.cursor = None
+
+        connection = getattr(self, "connection", None)
+        if connection is not None:
+            try:
+                connection.close()
+                self.__WriteDebugLog("close_connection", "ok")
+            except Exception:
+                self.__WriteDebugLog("close_connection", "failed")
+                pass
+            finally:
+                self.connection = None
+
+    def __WriteDebugLog(self,event:str,detail:Optional[str]) -> None:
+        """デバッグモード有効時にプロセス情報付きログを追記する。"""
+        if not getattr(self, "debug_mode", False):
+            return
+        try:
+            now = datetime.now().isoformat(timespec="seconds")
+            pid = os.getpid()
+            ppid = os.getppid()
+            proc_name = current_process().name
+            db_name = getattr(self, "DataBaseName", "(not-connected)")
+            msg = detail if detail is not None else ""
+            log_line = f"[{now}] pid={pid} ppid={ppid} proc={proc_name} db={db_name} event={event} detail={msg}\n"
+            with open(self.debug_log_path, mode="a", encoding="utf-8") as f:
+                f.write(log_line)
+        except Exception:
+            pass
 
     def AddTable(
         self,

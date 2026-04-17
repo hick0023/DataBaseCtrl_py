@@ -229,10 +229,26 @@ class DataBaseCtrl():
     def __del__(self) -> None:
         """デストラクタ"""
         #閉じる
+        self.Close()
+
+    def __enter__(self) -> 'DataBaseCtrl':
+        """コンテキストマネージャー開始時に自身を返す。"""
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> bool:
+        """コンテキストマネージャー終了時に接続を閉じる。"""
+        self.Close()
+        # 例外は握り潰さず呼び出し元に伝播させる
+        return False
+
+    def Close(self) -> None:
+        """カーソルと接続を安全にクローズする。"""
         if(self.cursor != None):
             self.cursor.close()
+            self.cursor = None
         if(self.conn != None):
             self.conn.close()
+            self.conn = None
             
     def UpdateInternalDataFrame(self, set_index:Optional[str]='ID') -> bool:
         """データベースから内部データフレームを更新する。
