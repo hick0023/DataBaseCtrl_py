@@ -165,7 +165,7 @@ class DataBaseCtrl():
             debug_mode (bool, optional): デバッグログを出力するかどうか. Defaults to False.
         """
         self.debug_mode = bool(debug_mode)
-        self.debug_log_path = os.path.join(os.path.dirname(__file__), "DataBaseCtrl_debug.log")
+        self.debug_log_path = os.path.join(os.getcwd(),"log", "DataBaseCtrl_debug.log")
         self.max_txt_len = max_txt_length
         self.__WriteDebugLog("init_start", f"host={DataBaseIP}, db={DataBaseName}, user={UserName}")
         if type(max_packet) == float:
