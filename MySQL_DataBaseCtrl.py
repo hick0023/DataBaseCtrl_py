@@ -298,9 +298,11 @@ class DataBaseCtrl():
                 self.cursor.fetchall()
                 self.err = None
                 result = True
+                self.__WriteDebugLog("AddTable", f"table={TableName} created")
             except pymysql.Error as err:
                 self.err = err
                 result = False
+                self.__WriteDebugLog("AddTable_error", f"table={TableName}, error={repr(err)}")
         return result
     
     def DeleteTable(self,TableName:str) -> bool:
@@ -318,9 +320,11 @@ class DataBaseCtrl():
             self.cursor.execute(sql)
             self.cursor.fetchall()
             result = True
+            self.__WriteDebugLog("DeleteTable", f"table={TableName} deleted")
         except pymysql.Error as err:
             self.err = err
             result = False
+            self.__WriteDebugLog("DeleteTable_error", f"table={TableName}, error={repr(err)}")
         return result
        
     def IsExistTable(self,TableName:str) -> Tuple[bool,bool]:
@@ -341,10 +345,12 @@ class DataBaseCtrl():
             self.err = None
             out_val = res[0]["COUNT(*)"] == 1
             err_bool = True
+            self.__WriteDebugLog("IsExistTable", f"table={TableName}, exist={out_val}")
         except pymysql.Error as err:
             self.err = err
             out_val = False
             err_bool = False
+            self.__WriteDebugLog("IsExistTable_error", f"table={TableName}, error={repr(err)}")
         return err_bool,out_val
        
     def AddColumn(
@@ -424,9 +430,11 @@ class DataBaseCtrl():
                 self.cursor.execute(sql)
                 self.cursor.fetchall()
                 self.err = None
+                self.__WriteDebugLog("AddColumn", f"table={TableName}, column={ColumnName} added")
             except pymysql.Error as err:
                 self.err = err
                 result = False
+                self.__WriteDebugLog("AddColumn_error", f"table={TableName}, column={ColumnName}, error={repr(err)}")
                     
         return result
     
@@ -446,9 +454,11 @@ class DataBaseCtrl():
             self.cursor.fetchall()
             self.err = None
             result = True
+            self.__WriteDebugLog("DeleteColumn", f"table={TableName}, column={ColumunName} deleted")
         except pymysql.Error as err:
             self.err = err
             result = False
+            self.__WriteDebugLog("DeleteColumn_error", f"table={TableName}, column={ColumunName}, error={repr(err)}")
         return result
 
     def OptimizeTable(self,TableName:str) -> bool:
@@ -466,9 +476,11 @@ class DataBaseCtrl():
             self.cursor.fetchall()
             self.err = None
             result = True
+            self.__WriteDebugLog("OptimizeTable", f"table={TableName} optimized")
         except pymysql.Error as err:
             self.err = err
             result = False
+            self.__WriteDebugLog("OptimizeTable_error", f"table={TableName}, error={repr(err)}")
         return result
             
     def GetColmunsInfo(self,TableName:str) -> List[Dict[str,Optional[str]]]:
@@ -485,8 +497,10 @@ class DataBaseCtrl():
             self.cursor.execute(sql)
             columuns = self.cursor.fetchall()
             self.err = None
+            self.__WriteDebugLog("GetColmunsInfo", f"table={TableName}, columns={len(columuns)}")
         except pymysql.Error as err:
             self.err = err
+            self.__WriteDebugLog("GetColmunsInfo_error", f"table={TableName}, error={repr(err)}")
         return columuns
 
     def GetRecordCount(self,TableName:str,ID:Optional[Union[int,str]]=None) -> Optional[int]:
@@ -511,9 +525,11 @@ class DataBaseCtrl():
             res = self.cursor.fetchall()
             self.err = None
             out_val = int(res[0]["COUNT(1)"])
+            self.__WriteDebugLog("GetRecordCount", f"table={TableName}, ID={ID}, count={out_val}")
         except pymysql.Error as err:
             self.err = err
             out_val = None
+            self.__WriteDebugLog("GetRecordCount_error", f"table={TableName}, ID={ID}, error={repr(err)}")
         return out_val
 
     def GetRowByID(self,TableName:str,ID:Optional[Union[int,str]]=None) -> Optional[DataFrame]:
@@ -539,8 +555,10 @@ class DataBaseCtrl():
             self.cursor.execute(sql)
             res = self.cursor.fetchall()
             self.err = None            
+            self.__WriteDebugLog("GetRowByID", f"table={TableName}, ID={ID}, rows={len(res)}")
         except pymysql.Error as err:
             self.err = err
+            self.__WriteDebugLog("GetRowByID_error", f"table={TableName}, ID={ID}, error={repr(err)}")
             return None
         if len(res) > 0:
             df = DataFrame(res)
@@ -569,6 +587,7 @@ class DataBaseCtrl():
         self.cursor.execute(sql)
         res = self.cursor.fetchall()
         id_list = [x["ID"] for x in res]
+        self.__WriteDebugLog("GetIDsBySearch", f"table={TableName}, search_str={search_str}, ids={id_list}")
         return id_list
         
     def GetDataFrameFormat(self,TableName:str) -> DataFrame:
